@@ -50,7 +50,7 @@ Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)` 网址
 ### 一键加入
 
 1. 从 App Store 安装 Plash（免费）：<https://apps.apple.com/app/plash/id1494023538>
-2. 双击项目根目录下的 **`加入 Plash 壁纸.command`**。
+2. 双击项目根目录下的 **`plash-install.command`**。
 
 脚本会自动完成三件事：
 
@@ -77,8 +77,8 @@ Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)` 网址
 
 ### 停止 / 卸载
 
-双击 **`停止 Plash 壁纸.command`**：移除开机自启并停止本地服务。
-重新双击「加入 Plash 壁纸.command」即可恢复。
+双击 **`plash-uninstall.command`**：移除开机自启并停止本地服务。
+重新双击 `plash-install.command` 即可恢复。
 
 ---
 
@@ -86,28 +86,28 @@ Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)` 网址
 
 ```
 desktop-website/
-├── index.html              壁纸入口页面
-├── app.js                  交互主逻辑
-├── catalog.js              穿搭数据
-├── dialogue-engine.js      对白引擎
-├── style.css / glass.css   样式
-├── plash.css               Plash 壁纸模式样式（仅 html.is-plash-mode 下生效）
-├── plash-adapter.js        Plash 适配层
-├── images/                 定格图与缩略图
-├── media/                  入场视频（9 个 .webm）
-├── preview.jpg             预览图
-├── project.json            Wallpaper Engine 项目描述
-├── 加入 Plash 壁纸.command   一键加入 Plash
-├── 停止 Plash 壁纸.command   停止服务并移除开机自启
+├── index.html                 壁纸入口页面
+├── app.js                     交互主逻辑
+├── catalog.js                 穿搭数据
+├── dialogue-engine.js         对白引擎
+├── style.css / glass.css      样式
+├── plash.css                  Plash 壁纸模式样式（仅 html.is-plash-mode 下生效）
+├── plash-adapter.js           Plash 适配层
+├── images/                    定格图与缩略图
+├── media/                     入场视频（9 个 .webm）
+├── preview.jpg                预览图
+├── project.json               Wallpaper Engine 项目描述
+├── plash-install.command      一键加入 Plash
+├── plash-uninstall.command    停止服务并移除开机自启
 └── tools/
-    ├── plash-server.sh     本地静态服务（仅监听 127.0.0.1）
-    └── plash-setup.sh      开机自启的安装 / 卸载 / 状态查询
+    ├── plash-server.sh        本地静态服务（仅监听 127.0.0.1）
+    └── plash-setup.sh         开机自启的安装 / 卸载 / 状态查询
 ```
 
 ## 常见问题
 
 **Plash 中壁纸显示无法连接**
-本地服务未运行。双击「加入 Plash 壁纸.command」，或在本机终端执行：
+本地服务未运行。双击 `plash-install.command`，或在本机终端执行：
 
 ```
 ./tools/plash-setup.sh install
@@ -116,14 +116,14 @@ desktop-website/
 日志位于 `/tmp/purple-plash-server.log`。
 
 **不想开机自启**
-双击「停止 Plash 壁纸.command」，或执行 `./tools/plash-setup.sh uninstall`。
+双击 `plash-uninstall.command`，或执行 `./tools/plash-setup.sh uninstall`。
 注意服务停止后壁纸将无法显示。
 
 **没有声音**
 Plash 默认静音，可在 Plash 设置 → Advanced 中开启。
 
 **项目移动了位置**
-开机自启记录的是绝对路径。移动项目后需重新双击「加入 Plash 壁纸.command」。
+开机自启记录的是绝对路径。移动项目后需重新双击 `plash-install.command`。
 
 **会影响 Wallpaper Engine 吗**
 不会。适配层只在检测到运行于 Plash 中时生效，Wallpaper Engine 与普通浏览器预览完全不受影响。

@@ -78,7 +78,7 @@ PLIST_EOF
   if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     printf '自启加载失败：%s\n' "${out:-未知错误}" >&2
     printf '\nlaunchd 只允许在已登录的图形会话中注册开机自启。\n' >&2
-    printf '请在访达中双击「加入 Plash 壁纸.command」，或在本机终端里重试。\n' >&2
+    printf '请在访达中双击 plash-install.command，或在本机终端里重试。\n' >&2
     return 1
   fi
 
