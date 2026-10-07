@@ -47,16 +47,18 @@ Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)` 网址
 
 端口固定为 **7070**：`localStorage` 中的偏好（收藏、自选定帧）与访问地址绑定，换端口会导致已有偏好丢失。
 
-### 一键加入
+### 一键启动
 
 1. 从 App Store 安装 Plash（免费）：<https://apps.apple.com/app/plash/id1494023538>
-2. 双击项目根目录下的 **`plash-install.command`**。
+2. 双击项目根目录下的 **`plash-start.command`**。
 
 脚本会自动完成三件事：
 
 - 确认 Plash 已安装；
-- 安装并启动本地服务（写入开机自启，此后登录自动运行）；
-- 调用 Plash 的 `plash:add` 命令注册壁纸。
+- 启动本地服务（写入开机自启，此后登录自动运行）；
+- 调用 Plash 的 `plash:add` 命令把壁纸注册进 Plash。
+
+脚本是**幂等**的：重复双击即为重启，不会产生重复服务。
 
 > 首次双击时 macOS 可能提示"无法验证开发者"。在「系统设置 → 隐私与安全性」中点击「仍要打开」即可。
 
@@ -73,12 +75,12 @@ Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)` 网址
 - **换装间隔**：在浏览模式中打开右上角设置面板，选择「偶尔换一套」的间隔。
 - **明暗 / 声音**：同上，设置面板内对应选项。
 - **换端口**：设置环境变量 `PLASH_PORT` 后重新运行脚本，例如
-  `PLASH_PORT=7080 ./tools/plash-setup.sh install`。注意换端口会重置偏好。
+  `PLASH_PORT=7080 ./tools/plash-setup.sh start`。注意换端口会重置偏好。
 
 ### 停止 / 卸载
 
-双击 **`plash-uninstall.command`**：移除开机自启并停止本地服务。
-重新双击 `plash-install.command` 即可恢复。
+双击 **`plash-stop.command`**：停止本地服务并移除开机自启。
+重新双击 `plash-start.command` 即可恢复。
 
 ---
 
@@ -97,33 +99,33 @@ desktop-website/
 ├── media/                     入场视频（9 个 .webm）
 ├── preview.jpg                预览图
 ├── project.json               Wallpaper Engine 项目描述
-├── plash-install.command      一键加入 Plash
-├── plash-uninstall.command    停止服务并移除开机自启
+├── plash-start.command        一键启动 Plash
+├── plash-stop.command         停止服务并移除开机自启
 └── tools/
     ├── plash-server.sh        本地静态服务（仅监听 127.0.0.1）
-    └── plash-setup.sh         开机自启的安装 / 卸载 / 状态查询
+    └── plash-setup.sh         开机自启的启动 / 停止 / 状态查询
 ```
 
 ## 常见问题
 
 **Plash 中壁纸显示无法连接**
-本地服务未运行。双击 `plash-install.command`，或在本机终端执行：
+本地服务未运行。双击 `plash-start.command`，或在本机终端执行：
 
 ```
-./tools/plash-setup.sh install
+./tools/plash-setup.sh start
 ```
 
 日志位于 `/tmp/purple-plash-server.log`。
 
 **不想开机自启**
-双击 `plash-uninstall.command`，或执行 `./tools/plash-setup.sh uninstall`。
+双击 `plash-stop.command`，或执行 `./tools/plash-setup.sh stop`。
 注意服务停止后壁纸将无法显示。
 
 **没有声音**
 Plash 默认静音，可在 Plash 设置 → Advanced 中开启。
 
 **项目移动了位置**
-开机自启记录的是绝对路径。移动项目后需重新双击 `plash-install.command`。
+开机自启记录的是绝对路径。移动项目后需重新双击 `plash-start.command`。
 
 **会影响 Wallpaper Engine 吗**
 不会。适配层只在检测到运行于 Plash 中时生效，Wallpaper Engine 与普通浏览器预览完全不受影响。

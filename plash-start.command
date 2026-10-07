@@ -58,5 +58,5 @@ printf '  · 壁纸地址：%s\n' "$URL"
 printf '  · 若未立即显示，点菜单栏的水滴图标，选择「%s」。\n' "$TITLE"
 printf '  · 想手动点击换装时，在菜单中开启 Browsing Mode（浏览模式）。\n'
 printf '  · 默认每 15 分钟自动换一套，可在浏览模式的设置面板中调整。\n'
-printf '  · 不再需要时，双击 plash-uninstall.command。\n\n'
+printf '  · 不再需要时，双击 plash-stop.command。\n\n'
 read -r -p '按回车键关闭此窗口…' _

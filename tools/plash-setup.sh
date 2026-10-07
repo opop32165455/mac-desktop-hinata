@@ -2,9 +2,11 @@
 # PURPLE · 片刻 —— Plash 本地服务：安装 / 卸载开机自启
 #
 # 用法：
-#   tools/plash-setup.sh install     安装并立即启动（此后登录自动运行）
-#   tools/plash-setup.sh uninstall   卸载自启并停止服务
-#   tools/plash-setup.sh status      查看当前状态
+#   tools/plash-setup.sh start     启动服务并写入开机自启（此后登录自动运行）
+#   tools/plash-setup.sh stop      停止服务并移除开机自启
+#   tools/plash-setup.sh status    查看当前状态
+#
+# 兼容别名：install = start，uninstall = stop
 set -u
 
 LABEL="com.frac-lab.purple-plash-server"
@@ -78,7 +80,7 @@ PLIST_EOF
   if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     printf '自启加载失败：%s\n' "${out:-未知错误}" >&2
     printf '\nlaunchd 只允许在已登录的图形会话中注册开机自启。\n' >&2
-    printf '请在访达中双击 plash-install.command，或在本机终端里重试。\n' >&2
+    printf '请在访达中双击 plash-start.command，或在本机终端里重试。\n' >&2
     return 1
   fi
 
@@ -127,8 +129,8 @@ status_agent() {
 }
 
 case "${1:-}" in
-  install)   install_agent ;;
-  uninstall) uninstall_agent ;;
-  status)    status_agent ;;
-  *) printf '用法：%s install | uninstall | status\n' "$0"; exit 1 ;;
+  start|install)   install_agent ;;
+  stop|uninstall)  uninstall_agent ;;
+  status)          status_agent ;;
+  *) printf '用法：%s start | stop | status\n' "$0"; exit 1 ;;
 esac
