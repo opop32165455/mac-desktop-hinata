@@ -11,7 +11,8 @@
  *      避免宿主因 visibilitychange 而暂停视频。
  *   3. 默认播放方式设为「全部轮播」，让壁纸持续播放并自动换装。
  *   4. 默认开启定时换装（15 分钟），作为「定格模式」下的兜底。
- *   5. 开启 Plash 浏览模式后界面恢复，可正常点击操作。
+ *   5. 切换穿搭前预解码目标大图，消除 WebKit 降采样解码的"先模糊后清晰"。
+ *   6. 开启 Plash 浏览模式后界面恢复，可正常点击操作。
  *
  * 调试参数（附加在地址末尾）：
  *   ?plash=1 / ?plash=0             强制开启或关闭适配
@@ -108,6 +109,34 @@
     rotationApplied = true;
   }
 
+  /* 4. 定格图预解码
+   * WebKit 对超大图会先以降采样分辨率绘制、再重解码为全分辨率，切换穿搭时
+   * 会出现"先模糊后清晰"的观感（Chrome 无此问题）。这里在指针移到或按下穿搭
+   * 卡片时提前解码目标定格图，使切换瞬间即为全分辨率。
+   * 该图同时用于 #still 与 .ambient，一次预解码覆盖两处。
+   * 非浏览模式下没有指针事件，因此不会产生额外开销。 */
+  var decoded = Object.create(null);
+  function predecode(url) {
+    if (decoded[url]) return;
+    decoded[url] = true;
+    var image = new Image();
+    image.src = url;
+    if (image.decode) image.decode().catch(function () { decoded[url] = false; });
+  }
+  function predecodeFromCard(event) {
+    var card = event.target && event.target.closest ? event.target.closest('[data-select]') : null;
+    if (!card) return;
+    var look = (window.PURPLE_LOOKS || [])[Number(card.dataset.select)];
+    if (look) predecode('images/look-' + look.id + '.jpg');
+  }
+  function setupPredecode() {
+    var looks = document.getElementById('looks');
+    if (!looks) return;
+    looks.addEventListener('pointerover', predecodeFromCard, true);
+    looks.addEventListener('pointerdown', predecodeFromCard, true);
+    looks.addEventListener('focusin', predecodeFromCard, true);
+  }
+
   // 按钮点击依赖 app.js 绑定的事件，因此需等文档解析完成。
   var controlsDone = false;
   function setupControls() {
@@ -115,6 +144,7 @@
     controlsDone = true;
     setupPlayback();
     setupRotation();
+    setupPredecode();
   }
 
   function apply() {
