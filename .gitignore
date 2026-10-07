@@ -20,3 +20,6 @@ ehthumbs.db
 *.log
 *.tmp
 *.bak
+
+# AI 工作区数据（非项目交付内容）
+.workbuddy-ai/
