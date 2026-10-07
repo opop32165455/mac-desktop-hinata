@@ -5,3 +5,11 @@ Wallpaper Engine 导入方法
 2. 打开 Wallpaper Engine 的壁纸编辑器，将文件夹中的 index.html 拖入，创建 Web 壁纸项目。
 3. 如果提示导入同文件夹的其他文件，请全部导入。请保留 images、media 及其他配套文件，不要只复制 index.html。
 4. 保存项目，在 Wallpaper Engine 中选中这张壁纸并应用即可。
+
+Plash（macOS）使用方法
+
+1. 从 App Store 安装 Plash（免费）。
+2. 双击项目根目录下的「加入 Plash 壁纸.command」，脚本会自动起本地服务并加入 Plash。
+3. 详细说明见「Plash 使用说明.md」。
+
+说明：Plash 不支持 file:// 本地地址，所以本壁纸通过 127.0.0.1:7070 的本地服务加载。

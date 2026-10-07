@@ -1,0 +1,23 @@
+/* PURPLE · 片刻 — Plash 壁纸模式样式
+ *
+ * 仅在 <html class="is-plash-mode"> 下生效，普通浏览器与 Wallpaper Engine 完全不受影响。
+ * 开启 Plash 浏览模式（<html class="plash-is-browsing-mode">）后以下规则自动失效，界面恢复。
+ */
+
+/* 非浏览模式：隐藏全部界面、唤醒按钮与浮层提示，呈现纯净壁纸 */
+html.is-plash-mode:not(.plash-is-browsing-mode) .interface,
+html.is-plash-mode:not(.plash-is-browsing-mode) .wake-button,
+html.is-plash-mode:not(.plash-is-browsing-mode) .toast,
+html.is-plash-mode:not(.plash-is-browsing-mode) .loading {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: none !important;
+  /* 延迟 visibility 切换，让淡出过程可见 */
+  transition: opacity .8s var(--ease), visibility 0s linear .8s;
+}
+
+/* 界面隐藏后，压暗画面的可读性渐变已无必要，让壁纸保持通透 */
+html.is-plash-mode:not(.plash-is-browsing-mode) .scene-shade {
+  opacity: 0 !important;
+}
