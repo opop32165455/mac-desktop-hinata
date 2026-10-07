@@ -21,3 +21,8 @@ html.is-plash-mode:not(.plash-is-browsing-mode) .loading {
 html.is-plash-mode:not(.plash-is-browsing-mode) .scene-shade {
   opacity: 0 !important;
 }
+
+/* 顶部的金色光边在壁纸模式下紧贴菜单栏，容易形成接缝感，故隐藏 */
+html.is-plash-mode:not(.plash-is-browsing-mode) .edge-light {
+  display: none !important;
+}
