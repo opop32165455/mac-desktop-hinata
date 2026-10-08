@@ -290,7 +290,24 @@
    * 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
    * 没有这个接口（Wallpaper Engine、普通浏览器）时第一次请求失败就不再轮询，行为同以前。 */
   let duck = 1, duckTarget = 1, duckTimer = 0, awayTimer = 0, awayProbe = 'unknown';
-  function soundLevel() { return prefs.volume / 100 * duck; }
+  function soundLevel() { return prefs.volume / 100 * duck * quiet; }
+  /* 往复循环段静音：每套第一次正放到底有声音；一进入倒放（循环开始）就把音量淡到 0，
+   * 循环里的倒放、正放都不出声。切换穿搭的倒带、换上来的新一套恢复声音。
+   * 同样只动音量、不动 muted（无手势取消静音会被 WebKit 暂停）。 */
+  let quiet = 1, quietTarget = 1, quietTimer = 0;
+  function rampQuiet(target, ms = 200) {
+    if (target === quietTarget && (target === quiet || quietTimer)) return;
+    quietTarget = target;
+    clearTimeout(quietTimer); quietTimer = 0;
+    const from = quiet, start = performance.now();
+    const step = () => {
+      const k = ms ? Math.min(1, (performance.now() - start) / ms) : 1;
+      quiet = from + (target - from) * k;
+      try { video.volume = soundLevel(); } catch (_) {}
+      quietTimer = k < 1 ? setTimeout(step, 16) : 0;
+    };
+    step();
+  }
   function rampDuck(target) {
     if (target === duckTarget) return;
     duckTarget = target;
@@ -380,6 +397,8 @@
       const d = clipDuration();
       updateProgress(Math.min(t, d));
       if (looping()) {
+        // 第一次正放到底、开始倒放：循环段静音。
+        if (t >= d - FRAME / 2 && quietTarget !== 0) rampQuiet(0);
         // 合并文件前半正放、后半倒放。倒放到折返点时回到正放段继续正放。
         // 备用牌组停在折返点前 PREROLL 秒；主牌组倒放到折返点前 PREROLL 秒时让它起播，
         // 两者从两侧同时走向折返点，到点时备用牌组已在运动，硬切过去没有起播停顿。
@@ -390,16 +409,18 @@
           // 主牌组刚显示到折返帧。备用牌组应正好走到这一帧：偏差记下来，校准下一轮的起播时机
           // （WebKit 起播延迟因机器与负载而异，固定提前量总会差几帧）。
           if (prerolling && turnError === null) {
-            turnError = spare.currentTime - pivot;
+            // 目标：主牌组刚显示折返帧，备用牌组下一帧正好是折返帧的后一帧（钟摆式转向，
+            // 不重复、不跳帧）。
+            turnError = spare.currentTime - (pivot + FRAME);
             prerollBias = clamp(prerollBias - turnError * .7, -.1, .3);
           }
-          if (prerolling && spare.currentTime >= pivot - FRAME / 2) swapLoopDecks();
+          if (prerolling && spare.currentTime >= pivot + FRAME / 2) swapLoopDecks();
           // 备用牌组起播稍慢时，让主牌组多倒放一点点等它，不定住画面。
           else if (prerolling && t < turn + .25) schedule();
           else {
             stopPreroll();
             // seek 尚未完成时回调里的时间可能仍是旧值，不能重复 seek，否则会卡死在折返点。
-            if (!video.seeking) { video.currentTime = pivotTime(); schedulePivot(1500); }
+            if (!video.seeking) { video.currentTime = pivotTime(); schedulePivot(PIVOT_DELAY); }
             schedule();
           }
         } else schedule();
@@ -439,6 +460,8 @@
     rewinding = true;
     stopWatcher();
     stopPreroll();
+    // 切换穿搭的倒带要有声音（动作配着脚步声），从循环段的静音里淡回来。
+    rampQuiet(1, 150);
     $('timelineState').textContent = '倒带';
     // 片尾自动换装时 t 已在正放/倒放的接缝处，合并文件会自然续进倒放段，不必 seek（seek 会卡一下）。
     if (t <= d && d - t > .05) video.currentTime = Math.max(0, Math.min(mirror(t), 2 * d - .05));
@@ -519,7 +542,9 @@
     item.promise.catch(() => {});
   }
   // 准备下一轮要推迟一点：seek 会占用解码器与 IO，若正好压在新牌组起播的那几帧上
-  // 就会掉帧。一个来回约 10 秒，推迟 1.5 秒仍绰绰有余。
+  // 就会掉帧。但循环段只有 1.2–2.2 秒（一个来回 2.3–4.4 秒），推迟太久会让 seek
+  // 压在下一次折返前，所以只避开起播的头 0.35 秒。
+  const PIVOT_DELAY = 350;
   function schedulePivot(delayMs) {
     clearTimeout(pivotTimer);
     pivotTimer = setTimeout(() => {
@@ -544,7 +569,7 @@
     spare.style.opacity = '.999'; spare.style.zIndex = '0'; spare.classList.remove('visible');
     startLoopDeck(video);
     watchFrames();
-    schedulePivot(1500);
+    schedulePivot(PIVOT_DELAY);
   }
   // 新牌组从没被用户手势播放过：开着声音时 WebKit 可能拒绝它带声起播（或取消静音时直接暂停它），
   // 以前这个拒绝被吞掉，画面就永远停在折返点。被拒时退回静音继续播，画面优先。
@@ -679,6 +704,7 @@
     const interrupted = phase === 'transition';
     if (interrupted) { startOperation(); phase = 'held'; }
     prefs.playbackMode = mode;
+    rampQuiet(1, 0);
     releaseSpare(); persist(); renderPlaybackMode();
     lastChange = Date.now();
     if (mode === 'freeze') selectLook(current, {restore: true, quiet: true});
@@ -800,6 +826,7 @@
       spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1'; spare.muted = true;
       tx.animation.cancel(); video.style.opacity = ''; transition = null;
       current = next; loadedLook = next; phase = 'playing';
+      rampQuiet(1, 0);
       applySound(true);
       $('still').src = `images/look-${LOOKS[next].id}.jpg`;
       $('still').alt = LOOKS[next].name + '穿搭推荐定格';
@@ -981,6 +1008,8 @@
       $('timelineState').textContent = '入场';
       pendingEntry = {id: task.id, index, event: quiet ? 'quiet' : entry, allowAffection};
       updateProgress(0);
+      // 新的一套：第一次正放到底要有声音。
+      rampQuiet(1, 0);
       applySound(true);
       await playSafely(task.id);
     } catch (error) { loadFailure(index, error, task.id); }
