@@ -411,10 +411,11 @@
           if (prerolling && turnError === null) {
             // 目标：主牌组刚显示折返帧，备用牌组下一帧正好是折返帧的后一帧（钟摆式转向，
             // 不重复、不跳帧）。
-            turnError = spare.currentTime - (pivot + FRAME);
+            // WebKit 的 currentTime 比屏幕上正显示的帧领先约一帧，所以对准「折返帧后两帧」。
+            turnError = spare.currentTime - (pivot + 2 * FRAME);
             prerollBias = clamp(prerollBias - turnError * .7, -.1, .3);
           }
-          if (prerolling && spare.currentTime >= pivot + FRAME / 2) swapLoopDecks();
+          if (prerolling && spare.currentTime >= pivot + 1.5 * FRAME) swapLoopDecks();
           // 备用牌组起播稍慢时，让主牌组多倒放一点点等它，不定住画面。
           else if (prerolling && t < turn + .25) schedule();
           else {
@@ -490,7 +491,8 @@
    * 硬切到暂停牌组仍会定住几帧 —— 所以让它提前 PREROLL 秒起播，见 watchFrames。 */
   const PREROLL = .3;
   // 自适应的额外提前量（秒），见 watchFrames；turnError 是本轮测得的会合偏差。
-  let prerollBias = 0, turnError = null;
+  // 初值取 WebKit 实测的起播延迟（约 4 帧），第一次折返就不会差太多。
+  let prerollBias = .07, turnError = null;
   function parkTime() { return Math.max(0, pivotTime() - PREROLL); }
   function pivotReady() {
     return Boolean(prefetch) && prefetch.element === spare && prefetch.index === current &&
