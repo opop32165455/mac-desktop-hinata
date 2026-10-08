@@ -104,7 +104,7 @@ desktop-website/
 ├── plash.css                  Plash 壁纸模式样式（仅 html.is-plash-mode 下生效）
 ├── plash-adapter.js           Plash 适配层（先于 app.js 加载）
 ├── images/                    定格图与缩略图
-├── media/                     入场视频（9 个 .webm）
+├── media/                     入场视频（9 个 H.264 MP4）
 ├── preview.jpg                预览图
 ├── project.json               Wallpaper Engine 项目描述
 ├── plash-start.command        一键启动 Plash

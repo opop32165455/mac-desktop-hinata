@@ -25,10 +25,9 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const number = (value, fallback, lo, hi) => Number.isFinite(Number(value)) ? clamp(Number(value), lo, hi) : fallback;
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  // Safari / Plash (WebKit) decode 4K VP9 slowly; they get the HEVC MP4 twin instead.
-  const UA = navigator.userAgent;
-  const MEDIA_EXT = /AppleWebKit/.test(UA) && !/Chrome|Chromium|CriOS|Edg/.test(UA) &&
-    document.createElement('video').canPlayType('video/mp4; codecs="hvc1.1.6.L153.B0"') ? 'mp4' : 'webm';
+  // All clips ship as H.264 MP4: Safari / Plash (WebKit) hardware-decodes it, and
+  // Chromium, CEF (Wallpaper Engine) and Firefox all play it natively.
+  const MEDIA_EXT = 'mp4';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) {}
   const FREEZE_REVISION = 1;
@@ -537,12 +536,9 @@
     });
   }
   async function loadSource(deck, index, signal) {
-    const load = ext => mediaEvent('loadeddata', signal, () => {
-      deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.${ext}`; deck.load();
+    await mediaEvent('loadeddata', signal, () => {
+      deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.${MEDIA_EXT}`; deck.load();
     }, deck);
-    if (MEDIA_EXT === 'webm') return load('webm');
-    // A copy without the MP4 files still plays the original WebM.
-    try { await load('mp4'); } catch (error) { if (error.message !== 'media') throw error; await load('webm'); }
   }
   async function ensureLoaded(index, signal) {
     if (!isPlayable(index)) throw new Error('unavailable');
