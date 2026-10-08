@@ -35,7 +35,7 @@
   const defaults = {
     current: 3, favorites: [], freezes: LOOKS.map((look, index) => isPlayable(index) ? look.freeze : null),
     freezeRevision: FREEZE_REVISION, sound: false, volume: 35, brightness: 100,
-    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'loop', switchMode: 'rewind'
+    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'loop', switchMode: 'rewind', muteAway: true
   };
   // 「隔一段时间换一套」的间隔：0 = 不自动换，否则 1–60 分钟（旧版的 0/5/15/30 原样有效）。
   const intervalMinutes = value => {
@@ -64,6 +64,7 @@
     volume: number(saved.volume, defaults.volume, 0, 100),
     brightness: number(saved.brightness, defaults.brightness, 65, 115),
     autoHide: saved.autoHide !== false,
+    muteAway: saved.muteAway !== false,
     fit: saved.fit === 'cover' ? 'cover' : 'contain',
     interval: intervalMinutes(saved.interval),
     // 默认「往复循环」；已保存的选择（包括定格）保持不变。
@@ -240,6 +241,7 @@
     $('volume').value = prefs.volume;
     $('volumeValue').textContent = prefs.volume + '%';
     $('idleToggle').checked = prefs.autoHide;
+    $('awayToggle').checked = prefs.muteAway;
     document.querySelectorAll('[data-fit]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fit === prefs.fit)));
     document.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === prefs.interval)));
     renderInterval();
@@ -281,7 +283,41 @@
   function applySound(retry = false) {
     if (retry) soundBlocked = false;
     video.muted = !prefs.sound || soundBlocked;
-    video.volume = prefs.volume / 100;
+    video.volume = soundLevel();
+  }
+  /* 离开桌面时静音：本地服务的 /desktop-state 报告普通窗口是否挡住了大部分主屏
+   * （tools/desktop-state.swift，只读窗口位置，不需要屏幕录制权限）。挡住时把音量
+   * 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
+   * 没有这个接口（Wallpaper Engine、普通浏览器）时第一次请求失败就不再轮询，行为同以前。 */
+  let duck = 1, duckTarget = 1, duckTimer = 0, awayTimer = 0, awayProbe = 'unknown';
+  function soundLevel() { return prefs.volume / 100 * duck; }
+  function rampDuck(target) {
+    if (target === duckTarget) return;
+    duckTarget = target;
+    clearTimeout(duckTimer);
+    const from = duck, start = performance.now();
+    const step = () => {
+      const k = Math.min(1, (performance.now() - start) / 300);
+      duck = from + (target - from) * k;
+      try { video.volume = soundLevel(); } catch (_) {}
+      if (k < 1) duckTimer = setTimeout(step, 16);
+    };
+    step();
+  }
+  async function pollDesktop() {
+    clearTimeout(awayTimer);
+    if (!prefs.sound || !prefs.muteAway || awayProbe === 'missing' || location.protocol === 'file:') { rampDuck(1); return; }
+    try {
+      const response = await fetch('desktop-state', {cache: 'no-store'});
+      if (!response.ok) throw new Error('status ' + response.status);
+      const state = await response.json();
+      awayProbe = 'ok';
+      if (prefs.sound && prefs.muteAway) rampDuck(state.onDesktop === false ? 0 : 1);
+    } catch (_) {
+      // 只有从没成功过才判定为「没有这项能力」；偶发失败下次再试。
+      if (awayProbe !== 'ok') { awayProbe = 'missing'; rampDuck(1); return; }
+    }
+    awayTimer = setTimeout(pollDesktop, 1500);
   }
   // 在用户手势里对两个牌组各 play() 一次，WebKit 便会解除该元素的带声播放限制。
   // 暂停中的牌组立即 pause() 并恢复原静音状态，不会出声、也不会挪动画面。
@@ -501,7 +537,7 @@
     video.id = 'film'; spare.id = 'filmNext';
     // 倒放段也有（倒放的）声音：两个牌组在折返点播的是同一瞬间的声音，80ms 交叉淡变，
     // 不会出现爆音或断音。淡出后再停掉看不见的旧牌组，免得它继续抢占解码。
-    const level = prefs.volume / 100;
+    const level = soundLevel();
     const retire = () => { if (outgoing === spare) { outgoing.pause(); outgoing.muted = true; } };
     if (incoming.muted || outgoing.muted) { incoming.volume = level; retire(); }
     else { fadeVolume(incoming, 0, level, 80); fadeVolume(outgoing, outgoing.volume, 0, 80, retire); }
@@ -1270,6 +1306,7 @@
   $('brightness').addEventListener('input', event => { prefs.brightness = Number(event.target.value); applyPrefs(); persist(); });
   $('volume').addEventListener('input', event => { prefs.volume = Number(event.target.value); applyPrefs(); persist(); });
   $('idleToggle').addEventListener('change', event => { prefs.autoHide = event.target.checked; applyPrefs(); persist(); });
+  $('awayToggle').addEventListener('change', event => { prefs.muteAway = event.target.checked; applyPrefs(); persist(); pollDesktop(); });
   // 设置面板里的「循环 / 定格」开关：循环即往复播放，定格即停在自选的一帧。
   $('loopToggle').addEventListener('change', event => { setPlaybackMode(event.target.checked ? 'loop' : 'freeze'); });
   // HTML buttons keep settings inside the web renderer across wallpaper hosts.
@@ -1294,7 +1331,7 @@
     if (!button) return;
     prefs.interval = Number(button.dataset.interval); lastChange = Date.now(); applyPrefs(); persist();
   });
-  $('soundButton').addEventListener('click', () => { prefs.sound = !prefs.sound; applyPrefs(); persist(); unlockAudio(); chime(660, .17); toast(prefs.sound ? '声音已开启。' : '安静地陪你。'); });
+  $('soundButton').addEventListener('click', () => { prefs.sound = !prefs.sound; applyPrefs(); persist(); pollDesktop(); unlockAudio(); chime(660, .17); toast(prefs.sound ? '声音已开启。' : '安静地陪你。'); });
   $('immerseButton').addEventListener('click', async () => { cancelSpin(); if (panel === 'moment') await cancelMoment(); else if (panel) closePanel(false); body.classList.add('is-immersed'); document.activeElement.blur(); });
   const wake = () => {
     const hidden = body.classList.contains('is-immersed') || body.classList.contains('is-idle');
@@ -1370,6 +1407,7 @@
     setStatus('MOMENT, KEPT.', line(current, 'held'));
   }
   showRememberedStill();
+  pollDesktop();
   if (cycling()) {
     const index = prefs.playbackMode === 'favorites' && !prefs.favorites.includes(current) ? favoriteOrder()[0] : current;
     selectLook(index, {quiet: true});

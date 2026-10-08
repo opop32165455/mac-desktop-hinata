@@ -11,15 +11,64 @@ Safari / Plash（WebKit + AVFoundation）播放 MP4 时按字节区间取数据�
 
 用法：plash-server.py PORT ROOT
 """
+import json
 import os
 import re
+import subprocess
 import sys
+import threading
+import time
 from functools import partial
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 RANGE = re.compile(r'^bytes=(\d*)-(\d*)$')
 CHUNK = 1 << 20
+
+# /desktop-state：用户是否在看桌面（普通窗口覆盖主屏的比例低于阈值）。
+# 由 tools/desktop-state.swift 判断，首次请求时编译到缓存目录；编译不了就返回 404，
+# 页面会当作没有这项能力（Wallpaper Engine、普通浏览器同样如此）。
+HERE = os.path.dirname(os.path.abspath(__file__))
+HELPER_SRC = os.path.join(HERE, 'desktop-state.swift')
+HELPER_BIN = os.path.expanduser('~/Library/Caches/purple-desktop/desktop-state')
+COVER_THRESHOLD = '0.75'
+_state_lock = threading.Lock()
+_state = {'at': 0.0, 'body': None, 'broken': False}
+
+
+def helper_ready():
+    try:
+        if os.path.getmtime(HELPER_BIN) >= os.path.getmtime(HELPER_SRC):
+            return True
+    except OSError:
+        pass
+    try:
+        os.makedirs(os.path.dirname(HELPER_BIN), exist_ok=True)
+        subprocess.run(['/usr/bin/xcrun', 'swiftc', '-O', HELPER_SRC, '-o', HELPER_BIN],
+                       check=True, capture_output=True, timeout=180)
+        return True
+    except Exception as error:
+        sys.stderr.write('desktop-state helper unavailable: %s\n' % error)
+        return False
+
+
+def desktop_state():
+    with _state_lock:
+        if _state['broken']:
+            return None
+        if _state['body'] is not None and time.monotonic() - _state['at'] < 0.8:
+            return _state['body']
+        if not helper_ready():
+            _state['broken'] = True
+            return None
+        try:
+            out = subprocess.run([HELPER_BIN, COVER_THRESHOLD], check=True, capture_output=True, timeout=5).stdout
+            json.loads(out)
+        except Exception as error:
+            sys.stderr.write('desktop-state failed: %s\n' % error)
+            return None
+        _state['at'], _state['body'] = time.monotonic(), out.strip()
+        return _state['body']
 
 
 class RangeHandler(SimpleHTTPRequestHandler):
@@ -28,6 +77,21 @@ class RangeHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Accept-Ranges', 'bytes')
         super().end_headers()
+
+    def do_GET(self):
+        if self.path.split('?', 1)[0] == '/desktop-state':
+            body = desktop_state()
+            if body is None:
+                self.send_error(HTTPStatus.NOT_FOUND, 'desktop-state unavailable')
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
 
     def send_head(self):
         self.range = None
