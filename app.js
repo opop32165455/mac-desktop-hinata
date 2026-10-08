@@ -338,13 +338,10 @@
       if (phase === 'playing' && !suspended() && video.paused) playSafely(operation);
     }
   }
-  function unlockAudio() {
-    if (!prefs.sound) return;
-    try {
-      audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
-      if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
-    } catch (_) {}
-  }
+  // 不再创建 Web Audio（AudioContext）：点击音效带来的额外音频会话没有必要，
+  // 壁纸的声音只来自 <video> 元素本身，绝不触碰系统的音频设备、音量或静音。
+  // audioContext 保持为空，chime() 因此直接返回。
+  function unlockAudio() {}
   function chime(pitch = 660, length = .11) {
     if (!prefs.sound || !audioContext || audioContext.state !== 'running' || suspended()) return;
     try {
