@@ -10,7 +10,7 @@
 set -u
 
 LABEL="com.frac-lab.purple-plash-server"
-PORT="${PLASH_PORT:-7070}"
+PORT="${PLASH_PORT:-47070}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$PROJECT_DIR/tools/plash-server.sh"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"

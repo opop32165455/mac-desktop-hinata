@@ -6,7 +6,7 @@
 # 换端口会导致已有偏好丢失。
 set -u
 
-PORT="${PLASH_PORT:-7070}"
+PORT="${PLASH_PORT:-47070}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${PLASH_PYTHON:-/usr/bin/python3}"
 

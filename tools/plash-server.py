@@ -71,6 +71,12 @@ def desktop_state():
         return _state['body']
 
 
+# /migrate-prefs：换端口时搬运页面偏好。localStorage 按「协议 + 主机 + 端口」隔离，
+# 换端口后新地址读不到旧偏好；旧地址的页面先把偏好存到这里，新地址第一次打开时取回。
+PREFS_FILE = os.path.expanduser('~/Library/Application Support/purple-desktop/prefs-migration.json')
+PREFS_LIMIT = 256 * 1024
+
+
 class RangeHandler(SimpleHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -81,7 +87,47 @@ class RangeHandler(SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
 
+    def send_json(self, body, status=HTTPStatus.OK):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        if self.path.split('?', 1)[0] != '/migrate-prefs':
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        # 只接受本页面带自定义头的请求：其它网站跨域发不出这个头（预检不会被放行）。
+        if self.headers.get('X-Purple') != '1':
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 < length <= PREFS_LIMIT:
+                raise ValueError('size')
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+                raise ValueError('shape')
+            os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
+            with open(PREFS_FILE, 'w', encoding='utf-8') as out:
+                json.dump(data, out, ensure_ascii=False)
+        except Exception:
+            self.send_error(HTTPStatus.BAD_REQUEST)
+            return
+        self.send_json(b'{"saved":true}')
+
     def do_GET(self):
+        if self.path.split('?', 1)[0] == '/migrate-prefs':
+            try:
+                with open(PREFS_FILE, 'rb') as source:
+                    body = source.read()
+            except OSError:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            self.send_json(body)
+            return
         if self.path.split('?', 1)[0] == '/desktop-state':
             body = desktop_state()
             if body is None:
@@ -178,7 +224,7 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 7070
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 47070
     root = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
     handler = partial(RangeHandler, directory=root)
     with Server(('127.0.0.1', port), handler) as httpd:

@@ -11,7 +11,7 @@
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-PORT="${PLASH_PORT:-7070}"
+PORT="${PLASH_PORT:-47070}"
 TITLE="PURPLE · 片刻"
 URL="http://127.0.0.1:${PORT}/index.html"
 
