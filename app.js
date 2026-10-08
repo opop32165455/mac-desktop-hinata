@@ -605,10 +605,10 @@
   // 往复循环依赖合并文件：[0, d] 为正放、[d, 2d] 为整段倒放（d = 单次入场片长）。
   const DEFAULT_PIVOT = 7;
   const FRAME = 1 / 60;
-  // 单段片长 = N 帧（合并文件共 2N 帧）。按帧数取整：容器常把最后一帧的时长记成 0，
-  // duration 会比 2N 帧短一帧，直接除以 2 会差半帧。
+  // 单段片长 = N 帧（合并文件共 2N 帧）。按帧数取整：容器时长可能少记最后一帧（2N-1 帧），
+  // 也可能被音轨的 AAC 补齐多出几毫秒，四舍五入到 N 两种情况都对。
   function clipDuration() {
-    const frames = Math.ceil(Number(video.duration) * 30 - .05);
+    const frames = Math.round(Number(video.duration) * 30);
     return Number.isFinite(frames) && frames > 60 ? frames / 60 : LOOKS[current].duration;
   }
   // 正放时间 t 在倒放段里的对应时间。倒放段是原始帧 N-2 … 0（不重复正放末帧），

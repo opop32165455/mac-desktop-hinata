@@ -98,6 +98,8 @@ build_one() {
     return 1
   fi
   mv "${out}" "${PROJECT_DIR}/media/look-${id}.mp4"
+  # 倒放段的音轨换成「保留脚步声」的版本（视频流原样复制）。
+  "${PROJECT_DIR}/tools/remux-reverse-audio.sh" "${id}"
   echo "    完成：$(du -h "${PROJECT_DIR}/media/look-${id}.mp4" | cut -f1)，${frames} 帧"
 }
 
