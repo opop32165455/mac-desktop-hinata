@@ -34,7 +34,7 @@
   const defaults = {
     current: 3, favorites: [], freezes: LOOKS.map((look, index) => isPlayable(index) ? look.freeze : null),
     freezeRevision: FREEZE_REVISION, sound: false, volume: 35, brightness: 100,
-    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'freeze'
+    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'freeze', switchMode: 'rewind'
   };
   const PREVIOUS_FREEZES = { '02': 11.7, '05': 11.2, '07': 10.5, '08': 11.7, '09': 10.5 };
   function initialFreeze(look, index) {
@@ -59,6 +59,8 @@
     fit: saved.fit === 'cover' ? 'cover' : 'contain',
     interval: [0, 5, 15, 30].includes(Number(saved.interval)) ? Number(saved.interval) : 0,
     playbackMode: ['single', 'all', 'favorites', 'loop'].includes(saved.playbackMode) ? saved.playbackMode : 'freeze',
+    // 切换穿搭的方式：'rewind' 先倒放回开头再换（默认），'cut' 直接切换。
+    switchMode: saved.switchMode === 'cut' ? 'cut' : 'rewind',
     nativeValues: saved.nativeValues && typeof saved.nativeValues === 'object' ? saved.nativeValues : {}
   };
   if (prefs.playbackMode === 'favorites' && !prefs.favorites.length) prefs.playbackMode = 'freeze';
@@ -219,6 +221,7 @@
     $('idleToggle').checked = prefs.autoHide;
     document.querySelectorAll('[data-fit]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fit === prefs.fit)));
     document.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === prefs.interval)));
+    document.querySelectorAll('[data-switch-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.switchMode === prefs.switchMode)));
     video.muted = !prefs.sound;
     video.volume = prefs.volume / 100;
     spare.muted = true;
@@ -317,7 +320,7 @@
   // 往复模式下切换前先把当前这一段倒放回开头（原片 0 秒处），再切到新的一套。
   // 合并文件里 [d, 2d] 是倒放段，正放位置 t 对应的倒放位置是 2d − t。
   async function rewindBeforeSwitch() {
-    if (rewinding) return;
+    if (rewinding || prefs.switchMode !== 'rewind') return;
     const d = clipDuration();
     const t = video.currentTime;
     if (!(t > .05)) return;
@@ -1042,6 +1045,12 @@
     const button = event.target.closest('[data-fit]');
     if (!button) return;
     prefs.fit = button.dataset.fit; applyPrefs(); persist();
+  });
+  // 切换方式：倒带（先倒放回开头再换）或闪入（直接切换）。
+  $('switchOptions').addEventListener('click', event => {
+    const button = event.target.closest('[data-switch-mode]');
+    if (!button) return;
+    prefs.switchMode = button.dataset.switchMode; applyPrefs(); persist();
   });
   $('autoOptions').addEventListener('click', event => {
     if (cycling()) return;

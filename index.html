@@ -100,6 +100,10 @@
       <button type="button" data-fit="contain" aria-pressed="true">完整画面</button><button type="button" data-fit="cover" aria-pressed="false">铺满屏幕</button>
     </div>
     <label class="setting-line toggle-line" for="loopToggle"><span>入场往复循环<small>正放到片尾后倒放回来，来回不停</small></span><input id="loopToggle" type="checkbox"><span class="switch"></span></label>
+    <div class="setting-line" id="switchLabel">切换穿搭的方式</div>
+    <div id="switchOptions" class="setting-options" role="group" aria-labelledby="switchLabel">
+      <button type="button" data-switch-mode="rewind" aria-pressed="true">倒带</button><button type="button" data-switch-mode="cut" aria-pressed="false">闪入</button>
+    </div>
     <div class="layout-setting">
       <button type="button" id="layoutButton" class="layout-button" aria-expanded="false" aria-controls="layoutControls">
         <span>调整界面位置<small id="layoutSummary">默认位置 · 左侧整列一起移动</small></span>
