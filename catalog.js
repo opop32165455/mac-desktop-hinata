@@ -125,7 +125,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "TIED WITH CARE",
     "freeze": 10.5,
     "duration": 12.033333,
-    "pivot": 10.65,
+    "pivot": 10.866667,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -281,7 +281,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "STAY A LITTLE LONGER",
     "freeze": 10.53,
     "duration": 12.028005,
-    "pivot": 10.383333,
+    "pivot": 10.883333,
     "fps": 60,
     "locked": false,
     "dialogue": {
