@@ -82,6 +82,7 @@
   let spinId = 0;
   let spinning = false;
   let rewinding = false;
+  let rewindTask = null;
   let bag = [];
   let idleTimer, toastTimer, loadingTimer, replyTimer;
   let lastChange = Date.now();
@@ -319,27 +320,32 @@
   }
   // 往复模式下切换前先把当前这一段倒放回开头（原片 0 秒处），再切到新的一套。
   // 合并文件里 [d, 2d] 是倒放段，正放位置 t 对应的倒放位置是 2d − t。
-  async function rewindBeforeSwitch() {
-    if (rewinding || prefs.switchMode !== 'rewind') return;
+  // 倒带过程中重复调用会拿到同一个 promise —— 多次点击复用同一次倒带，不会互相打断。
+  function rewindBeforeSwitch() {
+    if (prefs.switchMode !== 'rewind') return Promise.resolve();
+    if (rewindTask) return rewindTask;
     const d = clipDuration();
     const t = video.currentTime;
-    if (!(t > .05)) return;
+    if (!(t > .05)) return Promise.resolve();
     rewinding = true;
     stopWatcher();
     $('timelineState').textContent = '倒带';
     if (t <= d) video.currentTime = Math.max(0, Math.min(2 * d - t, 2 * d - .05));
-    await new Promise(resolve => {
+    rewindTask = new Promise(resolve => {
       const finish = () => { video.removeEventListener('ended', finish); clearTimeout(timer); resolve(); };
       const timer = setTimeout(finish, 20000);
       video.addEventListener('ended', finish, { once: true });
       const played = video.play();
       if (played && played.catch) played.catch(finish);
-    });
-    rewinding = false;
+    }).then(() => { rewinding = false; rewindTask = null; });
+    return rewindTask;
   }
   // 片尾自动换装同样先倒放回开头，与手动切换保持一致。
   async function rewindThenAdvance() {
+    const before = current;
     await rewindBeforeSwitch();
+    // 倒带期间若用户点了别的穿搭，交给那次 selectLook 处理，这里不再自动换装。
+    if (current !== before) return;
     advanceLoop();
   }
   function cancelSpin() {
@@ -680,11 +686,20 @@
     if (!preserveRandom && (index !== current || (!restore && entry === 'enter'))) dialogue.cancelPending();
     cancelSpin();
     if (panel) closePanel(false);
-    // 循环类模式下切换前先倒放回开头（往复 / 单套 / 轮播 / 收藏都一样）。
-    if (cycling() && index !== current && phase === 'playing') await rewindBeforeSwitch();
+
+    // 先接受选择：卡片高亮、名称与编号立刻更新，倒带动画随后才跟上。
+    // 倒带期间仍可继续点击，只会更新 current；倒带结束后以「当前选择」为准加载，
+    // 因此多次点击不会让早先那一次胜出。
+    const changed = index !== current;
+    current = index;
+    if (page !== pageFor(index)) setPage(pageFor(index), false);
+    updateCards(); persist();
+
+    if (changed && cycling() && phase === 'playing') await rewindBeforeSwitch();
+
+    index = current;
     const task = startOperation();
     releaseSpare();
-    current = index;
     if (page !== pageFor(index)) setPage(pageFor(index), false);
     phase = 'loading';
     readyControls(true);
