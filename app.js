@@ -292,7 +292,7 @@
         schedule();
       } else if (!cycling() && t >= freezeTime() - .006) settle();
       // 文件是「正放 + 倒放」的合并体，片尾要靠时间判断，不能等 ended（那是 2d 处）。
-      else if (t >= d - .006) advanceLoop();
+      else if (t >= d - .006) rewindThenAdvance();
       else schedule();
     };
     schedule();
@@ -333,6 +333,11 @@
       if (played && played.catch) played.catch(finish);
     });
     rewinding = false;
+  }
+  // 片尾自动换装同样先倒放回开头，与手动切换保持一致。
+  async function rewindThenAdvance() {
+    await rewindBeforeSwitch();
+    advanceLoop();
   }
   function cancelSpin() {
     ++spinId;
@@ -672,8 +677,8 @@
     if (!preserveRandom && (index !== current || (!restore && entry === 'enter'))) dialogue.cancelPending();
     cancelSpin();
     if (panel) closePanel(false);
-    // 往复模式下切换前先把当前这一段倒放回开头，再切到新的一套。
-    if (looping() && index !== current && phase === 'playing') await rewindBeforeSwitch();
+    // 循环类模式下切换前先倒放回开头（往复 / 单套 / 轮播 / 收藏都一样）。
+    if (cycling() && index !== current && phase === 'playing') await rewindBeforeSwitch();
     const task = startOperation();
     releaseSpare();
     current = index;
