@@ -31,42 +31,6 @@
 
   var root = document.documentElement;
 
-  /* 0. 换端口时搬运偏好
-   * localStorage 按「协议 + 主机 + 端口」隔离，本地服务从 7070 换到 47070 后新地址读不到旧偏好
-   * （收藏、自选定格、声音、换装间隔……）。旧地址的页面把本项目的偏好存到本地服务；
-   * 新地址第一次打开、自己还没有偏好时，同步取回再交给 app.js（本脚本在 app.js 之前执行）。 */
-  var LEGACY_PORT = '7070';
-  (function migratePrefs() {
-    var keys = [];
-    try {
-      for (var i = 0; i < localStorage.length; i++) {
-        var name = localStorage.key(i);
-        if (name && name.indexOf(KEY) === 0) keys.push(name);
-      }
-    } catch (_) { return; }
-    try {
-      if (location.port === LEGACY_PORT) {
-        if (!keys.length) return;
-        var data = {};
-        keys.forEach(function (name) { data[name] = localStorage.getItem(name); });
-        var save = new XMLHttpRequest();
-        save.open('POST', 'migrate-prefs');
-        save.setRequestHeader('X-Purple', '1');
-        save.setRequestHeader('Content-Type', 'application/json');
-        save.send(JSON.stringify(data));
-        return;
-      }
-      if (keys.length) return;
-      var load = new XMLHttpRequest();
-      load.open('GET', 'migrate-prefs', false);
-      load.send();
-      if (load.status !== 200) return;
-      var saved = JSON.parse(load.responseText);
-      Object.keys(saved).forEach(function (name) {
-        if (name.indexOf(KEY) === 0) localStorage.setItem(name, saved[name]);
-      });
-    } catch (_) {}
-  })();
   var params = new URLSearchParams(location.search);
   var forced = params.get('plash') === '1' ? true
              : params.get('plash') === '0' ? false

@@ -288,7 +288,7 @@
     video.volume = soundLevel();
   }
   /* 离开桌面时静音：本地服务的 /desktop-state 报告普通窗口是否挡住了大部分主屏
-   * （tools/desktop-state.swift，只读窗口位置，不需要屏幕录制权限）。挡住时把音量
+   * （tools/desktop-state.js，系统自带 osascript 运行，只读窗口位置，不需要屏幕录制权限）。挡住时把音量
    * 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
    * 没有这个接口（Wallpaper Engine、普通浏览器）时第一次请求失败就不再轮询，行为同以前。 */
   let duck = 1, duckTarget = 1, duckTimer = 0, awayTimer = 0, awayProbe = 'unknown';
@@ -331,7 +331,9 @@
       if (!response.ok) throw new Error('status ' + response.status);
       const state = await response.json();
       awayProbe = 'ok';
-      if (prefs.sound && prefs.muteAway) rampDuck(state.onDesktop === false ? 0 : 1);
+      // 桌面状态助手每秒更新一次；超过 10 秒没更新（助手停了）就当作在桌面，不再静音。
+      const fresh = !state.at || Date.now() / 1000 - state.at < 10;
+      if (prefs.sound && prefs.muteAway) rampDuck(fresh && state.onDesktop === false ? 0 : 1);
     } catch (_) {
       // 只有从没成功过才判定为「没有这项能力」；偶发失败下次再试。
       if (awayProbe !== 'ok') { awayProbe = 'missing'; rampDuck(1); return; }

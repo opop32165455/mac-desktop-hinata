@@ -24,11 +24,12 @@ Windows 上由 **Wallpaper Engine** 承载，macOS 上由 **Plash** 承载。
 | 依赖 | 说明 | 检查命令 |
 | --- | --- | --- |
 | macOS 12 或更新 | — | `sw_vers -productVersion` |
-| Plash | App Store 免费安装：<https://apps.apple.com/app/plash/id1494023538> | `ls /Applications/Plash.app` |
-| Python 3 | 本地服务目前用 `/usr/bin/python3`。**macOS 12 起系统不再自带 Python**，`/usr/bin/python3` 只是占位程序，第一次运行会弹窗安装「命令行开发者工具」（Command Line Tools），按提示安装即可 | `/usr/bin/python3 --version` |
-| curl | 系统自带，仅用于验证 | — |
+| Plash | **唯一需要安装的东西**。App Store 免费：<https://apps.apple.com/app/plash/id1494023538> | `ls /Applications/Plash.app` |
 
-只有在**重新生成视频**时才需要 ffmpeg 与 WebM 母版（见「媒体与编码」），部署不需要。
+其余全部使用 macOS 自带的程序：本地服务是系统自带的 **Apache**（`/usr/sbin/httpd`），桌面状态助手用系统自带的 **osascript**（JavaScript for Automation）。
+**不需要** Python、Xcode 或「命令行开发者工具」。注意不要调用 `/usr/bin/python3`、`swift`、`git` 等：在新装的 macOS 上它们只是占位程序，一运行就会弹窗要求安装命令行开发者工具。
+
+只有在**重新生成视频**时才需要 ffmpeg、Python 3 与 WebM 母版（见「媒体与编码」），部署和日常使用都不需要。
 
 ### 2. 启动本地服务（开机自启）
 
@@ -40,16 +41,29 @@ Windows 上由 **Wallpaper Engine** 承载，macOS 上由 **Plash** 承载。
 
 ```
 已安装开机自启：~/Library/LaunchAgents/com.frac-lab.purple-plash-server.plist
+                ~/Library/LaunchAgents/com.frac-lab.purple-desktop-state.plist
 本地服务已就绪：http://127.0.0.1:47070/index.html
 ```
 
-服务仅监听 `127.0.0.1:47070`，由 launchd 托管（崩溃自动重启、登录自动运行）。脚本是幂等的，重复执行即重启。
+脚本是幂等的，重复执行即重启（也会把旧版的 Python 服务升级为 Apache）。
+
+### 开机自启的内容
+
+| launchd 代理（`~/Library/LaunchAgents/`） | 作用 | 运行的程序 |
+| --- | --- | --- |
+| `com.frac-lab.purple-plash-server.plist` | 本地服务，只监听 `127.0.0.1:47070` | `/usr/sbin/httpd`（系统自带 Apache，配置由 `tools/plash-server.sh` 生成到 `~/Library/Application Support/purple-desktop/httpd.conf`） |
+| `com.frac-lab.purple-desktop-state.plist` | 「离开桌面时静音」的桌面遮挡判断，每秒写一次 `~/Library/Application Support/purple-desktop/public/desktop-state.json` | `/usr/bin/osascript -l JavaScript tools/desktop-state.js`（约 0.3% CPU） |
+
+两者都是**登录后自动运行、崩溃自动重启**的用户级代理，不需要管理员权限。
+另外请在 Plash 自己的设置里打开「登录时启动」（Launch at login），这样开机后壁纸会自动出现。
+项目文件夹**移动位置后**，代理里记录的路径会失效，需要重新执行 `./tools/plash-setup.sh start` 或双击 `plash-start.command`。
 
 ### 3. 验证服务
 
 ```bash
 ./tools/plash-setup.sh status
 # 开机自启：已加载
+# 桌面状态助手：已加载（{"onDesktop":true,"covered":0.12,"at":...}）
 # 本地服务：正常（http://127.0.0.1:47070/index.html）
 
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:47070/index.html
@@ -59,7 +73,12 @@ curl -s -o /dev/null -w "%{http_code}\n" -H 'Range: bytes=0-1' http://127.0.0.1:
 # 206   ← 必须是 206：Safari / Plash 播放 MP4 依赖 Range 请求，返回 200 会卡顿或播到一半停住
 ```
 
-日志：`/tmp/purple-plash-server.log`（只记录页面文件与每个视频的首次请求）。
+日志：`/tmp/purple-plash-access.log`（访问日志，只记页面文件与每个视频的首次请求）、`/tmp/purple-plash-server.log`（服务与助手的错误输出）。
+
+```bash
+curl -s http://127.0.0.1:47070/desktop-state
+# {"onDesktop":true,"covered":0.12,"at":1760000000}   ← at 每秒更新
+```
 
 ### 4. 把壁纸加入 Plash
 
@@ -81,7 +100,7 @@ open "plash:add?url=http://127.0.0.1:47070/index.html"
 ### 6. 停止 / 卸载
 
 ```bash
-./tools/plash-setup.sh stop     # 停止服务并移除开机自启（等同双击 plash-stop.command）
+./tools/plash-setup.sh stop     # 停止两个代理并移除开机自启（等同双击 plash-stop.command）
 ```
 
 ---
@@ -161,7 +180,7 @@ open "plash:add?url=http://127.0.0.1:47070/index.html"
 | 帧布局 | 正放取母版前 N 帧（去掉母版最后 2 帧的跳变），倒放为 N-2 … 0 再补一帧 0 |
 | 音轨 | 正放段为原声；倒放段每一下脚步声仍正着播放，对准倒放画面里落脚的那一帧 |
 
-重新生成（需要 ffmpeg，以及项目旁边的 WebM 母版目录 `../desktop-website-webm-masters/look-XX.webm`，**母版不在仓库里**）：
+重新生成（开发用，需要 ffmpeg、Python 3，以及项目旁边的 WebM 母版目录 `../desktop-website-webm-masters/look-XX.webm`，**母版不在仓库里**）：
 
 ```bash
 tools/build-loop-media.sh            # 全部 9 个
@@ -185,14 +204,16 @@ tools/remux-reverse-audio.sh 04      # 只重做倒放音轨，视频流原样�
 
 ### 为什么需要本地服务
 
-Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)`。本项目在 `127.0.0.1:47070` 上运行一个**仅监听本机**的静态服务（`tools/plash-server.py`），它额外提供：
+Plash **不支持 `file://` 本地文件地址**，只能加载 `http(s)`。本项目用 macOS 自带的 Apache 在 `127.0.0.1:47070` 上运行一个**仅监听本机**的静态服务（`tools/plash-server.sh` 生成配置并启动），它提供：
 
-- **Range 请求**（206）：Safari / Plash 播放与拖动 MP4 必需；
+- **Range 请求**（206）：Safari / Plash 播放与拖动 MP4 必需（Apache 原生支持）；
 - **`Cache-Control: no-cache`**：每次都向服务确认文件是否更新；
-- `/desktop-state`：「离开桌面时静音」用的桌面遮挡判断。首次请求时用 Xcode 的 `swiftc` 编译 `tools/desktop-state.swift`，只读取窗口位置，**不需要屏幕录制权限**。没有 `swiftc` 时该接口返回 404，页面会自动关闭这项功能，其余一切正常；
-- `/migrate-prefs`：换端口时搬运页面偏好（见下）。
+- `/desktop-state`：桌面状态助手写出的 JSON，「离开桌面时静音」用。助手只读取窗口位置，**不需要屏幕录制权限**；助手没在运行（文件不存在或 10 秒未更新）时，页面自动不做静音，其余一切正常；
+- 隐藏文件（如 `.git`）一律拒绝访问。
 
-端口固定为 **47070**（避开 AnyDesk 等使用的 7070，且低于 macOS 临时端口段 49152+）。页面偏好存在 `localStorage`，按地址（含端口）隔离。从旧端口 7070 升级时，旧页面会把偏好交给本地服务，新地址第一次打开时自动取回（`plash-adapter.js`）。
+Apache 与 osascript 在 macOS 12 到最新版本中都是系统自带的；模块路径从系统的 `/etc/apache2/httpd.conf` 读取，不同版本路径不同也能适配。
+
+端口固定为 **47070**（避开 AnyDesk 等使用的 7070，且低于 macOS 临时端口段 49152+）。页面偏好存在 `localStorage`，按地址（含端口）隔离，**换端口会让偏好回到默认**。
 需要换端口时：`PLASH_PORT=端口号 ./tools/plash-setup.sh start`，并在 Plash 里改用新地址。
 
 ### 在 Plash 中的表现
@@ -226,7 +247,7 @@ Plash 的壁纸窗口从菜单栏**下方**开始（例如 1920×1080 的屏幕�
 位于屏幕底部的程序坞同理。
 
 **改了配置 / 代码，Plash 里看不到变化**
-多半是缓存：按「媒体与编码」最后一段更新 `?v=` / `MEDIA_VERSION`，然后 Reload。可在 `/tmp/purple-plash-server.log` 确认 Plash 请求的是新版本号。
+多半是缓存：按「媒体与编码」最后一段更新 `?v=` / `MEDIA_VERSION`，然后 Reload。可在 `/tmp/purple-plash-access.log` 确认 Plash 请求的是新版本号。
 
 **电脑突然被静音（尤其在语音输入之后）**
 页面不会、也无法修改 macOS 的系统音量或静音。若使用蓝牙耳机 / 音箱同时作为麦克风，语音输入法或通话一打开麦克风，设备会切到「免提通话」模式，macOS 把它当作另一个有独立静音状态的设备，看起来就像电脑被静音了。可在 系统设置 → 声音 → 输入 选择其他麦克风，或检查输入法里「录音时静音其他声音」一类的选项。
@@ -262,16 +283,16 @@ desktop-website/
 ├── media/                      视频（9 个 HEVC MP4，正放 + 倒放）
 ├── preview.jpg                 预览图
 ├── project.json                Wallpaper Engine 项目描述
-├── plash-start.command         一键启动并加入 Plash
+├── plash-start.command          一键启动并加入 Plash
 ├── plash-stop.command          停止服务并移除开机自启
+├── AGENTS.md                   给 AI 编程助手的要点
 └── tools/
-    ├── plash-setup.sh          开机自启的 start / stop / status
-    ├── plash-server.sh         launchd 调用的启动脚本
-    ├── plash-server.py         本地服务（Range、no-cache、/desktop-state、/migrate-prefs）
-    ├── desktop-state.swift     「离开桌面时静音」的桌面遮挡判断
-    ├── build-loop-media.sh     从 WebM 母版生成合并视频
-    ├── remux-reverse-audio.sh  只重做倒放音轨
-    └── reverse-audio-events.py 保留脚步声的倒放音轨生成
+    ├── plash-setup.sh          开机自启的 start / stop / status（两个 launchd 代理）
+    ├── plash-server.sh         生成 Apache 配置并以前台方式运行系统自带的 httpd
+    ├── desktop-state.js        桌面状态助手（osascript JXA），「离开桌面时静音」用
+    ├── build-loop-media.sh     从 WebM 母版生成合并视频（开发用，需要 ffmpeg）
+    ├── remux-reverse-audio.sh  只重做倒放音轨（开发用）
+    └── reverse-audio-events.py 保留脚步声的倒放音轨生成（开发用，需要 Python 3）
 ```
 
 ## 调试

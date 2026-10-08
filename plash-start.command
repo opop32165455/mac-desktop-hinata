@@ -24,15 +24,12 @@ if [ ! -d "/Applications/Plash.app" ]; then
   exit 1
 fi
 
-if curl -fsS -o /dev/null "$URL" 2>/dev/null; then
-  printf '本地服务已在运行：http://127.0.0.1:%s\n' "$PORT"
-else
-  printf '本地服务未运行，正在安装并启动…\n'
-  if ! ./tools/plash-setup.sh install; then
-    printf '\n启动失败，请查看日志：/tmp/purple-plash-server.log\n\n'
-    read -r -p '按回车键退出…' _
-    exit 1
-  fi
+# 每次都（重新）安装开机自启：幂等，同时把旧版服务（如 Python 版）升级为系统自带的 Apache。
+printf '正在启动本地服务…\n'
+if ! ./tools/plash-setup.sh install; then
+  printf '\n启动失败，请查看日志：/tmp/purple-plash-server.log\n\n'
+  read -r -p '按回车键退出…' _
+  exit 1
 fi
 
 if ! curl -fsS -o /dev/null "$URL" 2>/dev/null; then
@@ -41,17 +38,10 @@ if ! curl -fsS -o /dev/null "$URL" 2>/dev/null; then
   exit 1
 fi
 
-# Plash 的 URL 参数需要转义；Python 不可用时退回由 Plash 自动抓取页面标题。
-ENCODED=""
-if [ -x /usr/bin/python3 ]; then
-  ENCODED="$(/usr/bin/python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$TITLE" 2>/dev/null)"
-fi
-
-if [ -n "$ENCODED" ]; then
-  open -g "plash:add?url=${URL}&title=${ENCODED}"
-else
-  open -g "plash:add?url=${URL}"
-fi
+# Plash 的 URL 参数需要转义。直接写死转义结果：不调用 /usr/bin/python3 ——
+# 新装的 macOS 上它只是占位程序，一运行就会弹出安装「命令行开发者工具」。
+ENCODED="PURPLE%20%C2%B7%20%E7%89%87%E5%88%BB"   # 「PURPLE · 片刻」
+open -g "plash:add?url=${URL}&title=${ENCODED}"
 
 printf '\n已加入 Plash。\n\n'
 printf '  · 壁纸地址：%s\n' "$URL"
