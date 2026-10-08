@@ -162,7 +162,10 @@ class RangeHandler(SimpleHTTPRequestHandler):
         # launchd 常驻：视频分段请求与 /desktop-state 轮询太多，不记；只记页面文件，
         # 便于确认 Plash reload 后确实取到了新版本。
         path = self.path.split('?', 1)[0]
-        if path.startswith('/media/') or path == '/desktop-state':
+        if path == '/desktop-state':
+            return
+        # 视频只记每个文件的第一次请求（Range 从 0 开始），用来确认加载的是哪个版本。
+        if path.startswith('/media/') and not (self.headers.get('Range') or '').startswith('bytes=0-'):
             return
         sys.stderr.write('%s %s\n' % (self.log_date_time_string(), format % args))
 

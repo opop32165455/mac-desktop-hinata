@@ -30,7 +30,7 @@
   // with `CODEC=h264 tools/build-loop-media.sh` for those hosts.
   const MEDIA_EXT = 'mp4';
   // 视频重新生成后改这个版本号，Plash 才不会继续播缓存里的旧文件。
-  const MEDIA_VERSION = '20261008e';
+  const MEDIA_VERSION = '20261008g';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) {}
   const FREEZE_REVISION = 1;
