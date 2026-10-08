@@ -25,8 +25,9 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const number = (value, fallback, lo, hi) => Number.isFinite(Number(value)) ? clamp(Number(value), lo, hi) : fallback;
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  // All clips ship as H.264 MP4: Safari / Plash (WebKit) hardware-decodes it, and
-  // Chromium, CEF (Wallpaper Engine) and Firefox all play it natively.
+  // All clips ship as HEVC (hvc1) MP4: Safari / Plash (WebKit) and Chrome on macOS
+  // hardware-decode it. CEF (Wallpaper Engine) and Firefox usually cannot; rebuild
+  // with `CODEC=h264 tools/build-loop-media.sh` for those hosts.
   const MEDIA_EXT = 'mp4';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) {}
@@ -329,14 +330,20 @@
       const d = clipDuration();
       updateProgress(Math.min(t, d));
       if (looping()) {
-        // 合并文件 [0, d] 正放、[d, 2d] 倒放。倒放到折返点时回到正放段继续正放。
+        // 合并文件前半正放、后半倒放。倒放到折返点时回到正放段继续正放。
         // 备用牌组停在折返点前 PREROLL 秒；主牌组倒放到折返点前 PREROLL 秒时让它起播，
         // 两者从两侧同时走向折返点，到点时备用牌组已在运动，硬切过去没有起播停顿。
         // 牌组未就绪时退回普通 seek。
-        const turn = 2 * d - pivotTime();
-        if (!prerolling && t >= turn - PREROLL - .006 && t < turn && pivotReady()) startPreroll();
+        const pivot = pivotTime(), turn = mirror(pivot);
+        if (!prerolling && t >= turn - PREROLL - prerollBias - .006 && t < turn && pivotReady()) startPreroll();
         if (t >= turn - .006) {
-          if (prerolling && spare.currentTime > parkTime() + .02) swapLoopDecks();
+          // 主牌组刚显示到折返帧。备用牌组应正好走到这一帧：偏差记下来，校准下一轮的起播时机
+          // （WebKit 起播延迟因机器与负载而异，固定提前量总会差几帧）。
+          if (prerolling && turnError === null) {
+            turnError = spare.currentTime - pivot;
+            prerollBias = clamp(prerollBias - turnError * .7, -.1, .3);
+          }
+          if (prerolling && spare.currentTime >= pivot - FRAME / 2) swapLoopDecks();
           // 备用牌组起播稍慢时，让主牌组多倒放一点点等它，不定住画面。
           else if (prerolling && t < turn + .25) schedule();
           else {
@@ -384,7 +391,7 @@
     stopPreroll();
     $('timelineState').textContent = '倒带';
     // 片尾自动换装时 t 已在正放/倒放的接缝处，合并文件会自然续进倒放段，不必 seek（seek 会卡一下）。
-    if (t <= d && d - t > .05) video.currentTime = Math.max(0, Math.min(2 * d - t, 2 * d - .05));
+    if (t <= d && d - t > .05) video.currentTime = Math.max(0, Math.min(mirror(t), 2 * d - .05));
     rewindTask = new Promise(resolve => {
       const finish = () => { video.removeEventListener('ended', finish); clearTimeout(timer); resolve(); };
       const timer = setTimeout(finish, 20000);
@@ -409,13 +416,15 @@
    * 但暂停的牌组 play() 后要过几帧才真正走起来（WebKit 需要重新 preroll），
    * 硬切到暂停牌组仍会定住几帧 —— 所以让它提前 PREROLL 秒起播，见 watchFrames。 */
   const PREROLL = .3;
+  // 自适应的额外提前量（秒），见 watchFrames；turnError 是本轮测得的会合偏差。
+  let prerollBias = 0, turnError = null;
   function parkTime() { return Math.max(0, pivotTime() - PREROLL); }
   function pivotReady() {
     return Boolean(prefetch) && prefetch.element === spare && prefetch.index === current &&
       spare.readyState >= 2 && !spare.seeking && (prerolling || Math.abs(spare.currentTime - parkTime()) < .05);
   }
   function startPreroll() {
-    prerolling = true;
+    prerolling = true; turnError = null;
     spare.muted = true;
     nativePlay.get(spare)().catch(() => { if (prerolling) stopPreroll(); });
   }
@@ -432,7 +441,10 @@
     const item = {index: current, element: spare, controller: new AbortController(), promise: null};
     prefetch = item;
     const deck = spare, signal = item.controller.signal;
-    deck.pause(); deck.muted = true; deck.style.opacity = '0'; deck.style.zIndex = '1';
+    // 往复时备用牌组一直垫在主牌组下面、保持可见（同样 .999），换牌只改层级：
+    // 不透明度从 0 变为可见时 WebKit 要重新建立视频图层、提交首帧，正是折返瞬间的一两帧空白。
+    deck.pause(); deck.muted = true; deck.style.opacity = '.999'; deck.style.zIndex = '0';
+    video.style.zIndex = '1';
     item.promise = (async () => {
       if (deck.dataset.look !== LOOKS[current].id || deck.readyState < 2) await loadSource(deck, current, signal);
       if (Math.abs(deck.currentTime - pivot) > .02 || deck.seeking) {
@@ -461,21 +473,12 @@
     // 先停掉看不见的旧牌组，免得它继续抢占解码。
     outgoing.pause(); outgoing.muted = true;
     video.id = 'film'; spare.id = 'filmNext';
-    // 旧牌组换成 #filmNext 后 CSS 会把它变成透明；淡入期间必须用行内样式托住，
-    // 否则新牌组从 0 淡入的 140ms 里会透出背景，看起来就是一次闪顿。
-    outgoing.style.opacity = '.999'; outgoing.style.zIndex = '1';
-    // 极短交叉淡入：切点两侧是同一帧，所以看不出混合，但能盖住合成层切换的空隙。
-    // 终点用 .999 而不是 1，与 #film.visible 一致（避免 macOS 叠加层泛白）。
-    video.style.zIndex = '2'; video.classList.add('visible');
-    const fade = video.animate([{opacity: 0}, {opacity: .999}], {duration: 140, easing: 'linear', fill: 'forwards'});
+    // 两个牌组都已在合成、都是 .999（避免 macOS 叠加层泛白），换牌只对调层级，
+    // 同一次绘制里生效；旧牌组留在下面，下一轮直接在原地 seek 到停靠点。
+    video.style.opacity = '.999'; video.style.zIndex = '1'; video.classList.add('visible');
+    spare.style.opacity = '.999'; spare.style.zIndex = '0'; spare.classList.remove('visible');
     startLoopDeck(video);
     watchFrames();
-    fade.finished.then(() => {
-      if (video !== incoming) return;
-      video.style.opacity = ''; video.style.zIndex = '1';
-      fade.cancel();
-      spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1';
-    }).catch(() => {});
     schedulePivot(1500);
   }
   // 新牌组从没被用户手势播放过：开着声音时 WebKit 可能拒绝它带声起播（或取消静音时直接暂停它），
@@ -520,10 +523,16 @@
   function looping() { return prefs.playbackMode === 'loop'; }
   // 往复循环依赖合并文件：[0, d] 为正放、[d, 2d] 为整段倒放（d = 单次入场片长）。
   const DEFAULT_PIVOT = 7;
+  const FRAME = 1 / 60;
+  // 单段片长 = N 帧（合并文件共 2N 帧）。按帧数取整：容器常把最后一帧的时长记成 0，
+  // duration 会比 2N 帧短一帧，直接除以 2 会差半帧。
   function clipDuration() {
-    const half = Number(video.duration) / 2;
-    return Number.isFinite(half) && half > 1 ? half : LOOKS[current].duration;
+    const frames = Math.ceil(Number(video.duration) * 30 - .05);
+    return Number.isFinite(frames) && frames > 60 ? frames / 60 : LOOKS[current].duration;
   }
+  // 正放时间 t 在倒放段里的对应时间。倒放段是原始帧 N-2 … 0（不重复正放末帧），
+  // 所以原始帧 i 的倒放位置是 2N-2-i，见 tools/build-loop-media.sh。
+  function mirror(t) { return 2 * (clipDuration() - FRAME) - t; }
   // 折返点：默认 7 秒，可在 catalog.js 的 look 上写 "pivot" 单独调整。
   function pivotTime() {
     const look = LOOKS[current];
@@ -607,6 +616,8 @@
   }
   function releaseSpare() {
     prefetch?.controller.abort(); prefetch = null; prerolling = false;
+    // 往复时主牌组带着行内 .999；交还给 CSS 的 #film.visible 控制，出错隐藏等才会生效。
+    video.style.opacity = '';
     spare.pause(); spare.muted = true;
     spare.style.opacity = '0'; spare.style.zIndex = '1';
     spare.removeAttribute('src'); spare.removeAttribute('data-look'); spare.load();

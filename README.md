@@ -68,13 +68,18 @@ Windows 上由 **Wallpaper Engine** 承载，macOS 上由 **Plash** 承载。
 HTML5 视频**不支持负向播放** —— `playbackRate` 规范上允许负值，但没有任何浏览器实现它。
 所以倒放不是实时计算的，而是把每个视频预先做成「正放 + 倒放」的合并文件：
 
-| 区间 | 内容 |
+| 帧 | 内容 |
 | --- | --- |
-| `[0, d]` | 正放（`d` = 单次入场片长，约 12 秒） |
-| `[d, 2d]` | 整段倒放 |
+| `[0, N)` | 正放：原始帧 0 … N-1（`N` 约 722 帧 = 12 秒） |
+| `[N, 2N)` | 倒放：原始帧 N-2 … 0，末尾补一帧 0（不重复正放末帧，片尾转倒放不定帧） |
 
-往复只需每个来回一次 `seek`，倒放本身是硬件解码的正向播放，因此完全流畅。
-生成脚本见 `tools/build-loop-media.sh`（约 24 秒 / 每个约 45MB）。
+倒放本身是硬件解码的正向播放，因此流畅。折返点（默认 7 秒，可在 `catalog.js` 写 `pivot`）
+由两个牌组接力：备用牌组提前停在折返点前 0.3 秒并提前起播，与倒放中的主牌组在折返帧会合，
+换牌只对调层级，不发生可见的 seek。
+
+视频由 `tools/build-loop-media.sh` 从 WebM 母版（项目旁的 `desktop-website-webm-masters/`，
+不入库）一次编码生成：HEVC（hvc1）、CRF 14、每 0.5 秒一个关键帧，每个约 40MB。
+Windows 上的 Wallpaper Engine 通常不能解 HEVC，需要时用 `CODEC=h264` 重新生成。
 
 ---
 
@@ -157,7 +162,7 @@ desktop-website/
 ├── plash.css                  Plash 壁纸模式样式（仅 html.is-plash-mode 下生效）
 ├── plash-adapter.js           Plash 适配层（先于 app.js 加载）
 ├── images/                    定格图与缩略图
-├── media/                     入场视频（9 个 H.264 MP4）
+├── media/                     入场视频（9 个 HEVC MP4，正放 + 倒放）
 ├── preview.jpg                预览图
 ├── project.json               Wallpaper Engine 项目描述
 ├── plash-start.command        一键启动 Plash

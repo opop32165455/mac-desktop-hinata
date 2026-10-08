@@ -1,76 +1,105 @@
 #!/bin/bash
-# PURPLE · 片刻 —— 生成「往复循环」视频
+# PURPLE · 片刻 —— 从 WebM 母版生成「往复循环」视频
 #
-# 为每个 media/look-XX.mp4 生成一个约 24 秒的合并文件（同名覆盖）：
-#   [0 – 12s]  正放：原始内容
-#   [12 – 24s] 倒放：整段反向
-# 正放段来自原文件解码（零额外损失），倒放段由帧序列重新编码。
-# 正放段保留原始音轨，倒放段为静音（反向音频听感异常，故不保留）。
+# 为每套穿搭生成一个合并文件 media/look-XX.mp4（同名覆盖），N = 母版帧数：
+#   帧 [0, N)    正放：原始帧 0 … N-1
+#   帧 [N, 2N)   倒放：原始帧 N-2 … 0，再补一帧 0
+# 倒放段不重复正放末帧，所以片尾转倒放时没有定住的一帧；末尾补的一帧 0
+# 只为让两段等长（时长 = 2N 帧，app.js 以 duration / 2 取单段片长）。
+# 原始帧 i 的正放时间是 i/60，倒放时间是 (2N-2-i)/60 —— 见 app.js 的 mirror()。
 #
 # 设计要点：
-#  1. 不用 ffmpeg 的 reverse 滤镜 —— 它会把整段解码帧缓冲在内存里，
-#     12 秒 4K60 约需 6.8GB，超过本机可用内存。改用「提取帧序列 → 反向
-#     排序软链接 → 重新编码」，内存峰值降到约 1.2GB。
-#  2. 用单次编码而不是 -c copy 拼接 —— 两段流的编码配置不一致时
-#     （如 tv/bt709 与 pc/bt470bg），拼接文件的后半段会黑屏。
+#  1. 只做一次有损编码，源是 WebM 母版（VP9），不经过现有 MP4 或 JPEG 中间帧。
+#  2. 不对整段用 reverse 滤镜（12 秒 4K60 要缓冲约 9GB 原始帧）。改为每 60 帧一块
+#     倒序，存成无损中间文件，再按逆序拼接，内存峰值约 1GB。
+#  3. HEVC（hvc1）：同样码率下比 H.264 清晰得多，Apple 芯片硬件解码，
+#     Safari / Plash / macOS 上的 Chrome 都能播。Windows 上的 Wallpaper Engine
+#     通常不能解 HEVC，需要时可用 CODEC=h264 生成 H.264 版本。
+#  4. 每 30 帧（0.5 秒）一个闭合 GOP，关键帧落在整半秒上：默认折返点 7 秒
+#     正好是关键帧，文件内 seek（倒带、折返）只需解码很少的帧。
+#  5. 音轨比视频短一点点，保证 duration 由视频决定（AAC 补齐不会把时长拉长）。
+#
+# 母版位置默认是项目旁边的 desktop-website-webm-masters/，可用 MASTERS=… 覆盖。
 #
 # 注意：所有变量引用一律写成 ${var} 形式。macOS 自带 bash 3.2 在
 #      变量名紧跟多字节字符（如 ${id}：）时会把中文误并入变量名。
 #
 # 用法：
 #   tools/build-loop-media.sh [look 编号，如 04；省略则处理全部]
+#   CRF=14 CODEC=hevc|h264 MASTERS=/path/to/webm tools/build-loop-media.sh
 set -eu
 
 FF="${FFMPEG:-/Users/xczhang/.local/bin/ffmpeg}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MASTERS="${MASTERS:-$(dirname "${PROJECT_DIR}")/desktop-website-webm-masters}"
+CRF="${CRF:-14}"
+CODEC="${CODEC:-hevc}"
 WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
+trap '[ -n "${KEEP_WORK:-}" ] || rm -rf "${WORK}"' EXIT
 
-VIDEO_ARGS="-c:v libx264 -preset fast -b:v 15M -maxrate 18M -bufsize 30M -profile:v high -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv"
-AUDIO_ARGS="-c:a aac -b:a 128k"
+COLOR_ARGS="-pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv"
+if [ "${CODEC}" = "h264" ]; then
+  VIDEO_ARGS="-c:v libx264 -preset slow -crf ${CRF} -profile:v high -g 30 -keyint_min 30 -sc_threshold 0 -flags +cgop"
+else
+  VIDEO_ARGS="-c:v libx265 -preset medium -crf ${CRF} -tag:v hvc1 -x265-params keyint=30:min-keyint=30:no-open-gop=1:scenecut=0:log-level=error"
+fi
+AUDIO_ARGS="-c:a aac -b:a 192k"
+# 母版有 -0.007 秒的起始偏移；统一归零并锁定 60fps，正放与倒放块用完全相同的取帧方式。
+# 倒放块按帧序号重排时间戳（setpts=N/60/TB）：中间 mkv 是毫秒时基，直接沿用会丢帧。
+PREP="setpts=PTS-STARTPTS,fps=60,format=yuv420p"
+CHUNK=60
 
-duration_of() {
-  "${FF}" -hide_banner -i "$1" 2>&1 | grep -oE 'Duration: [0-9:.]+' | head -1 | cut -d' ' -f2
+frame_count() {
+  "${FF}" -hide_banner -i "$1" -map 0:v -vf "${PREP}" -f null - 2>&1 | grep -oE 'frame= *[0-9]+' | tail -1 | grep -oE '[0-9]+'
 }
 
 build_one() {
   local id="$1"
-  local src="${PROJECT_DIR}/media/look-${id}.mp4"
+  local src="${MASTERS}/look-${id}.webm"
   local out="${PROJECT_DIR}/media/look-${id}.mp4.new"
   if [ ! -f "${src}" ]; then
-    echo "跳过 look-${id}：源文件不存在" >&2
+    echo "跳过 look-${id}：母版不存在 ${src}" >&2
     return 0
   fi
-
-  echo "=== look-${id} 提取帧 ==="
-  rm -rf "${WORK}/fwd" "${WORK}/rev"
-  mkdir -p "${WORK}/fwd" "${WORK}/rev"
-  "${FF}" -y -hide_banner -loglevel error -i "${src}" -an -q:v 1 "${WORK}/fwd/%05d.jpg"
   local n
-  n="$(ls "${WORK}/fwd" | wc -l | tr -d ' ')"
-  echo "    帧数 ${n}，源时长 $(duration_of "${src}")"
+  n="$(frame_count "${src}")"
+  echo "=== look-${id}：${n} 帧，倒序分块 ==="
 
-  /usr/bin/python3 - "${WORK}" <<'PY'
-import os, sys, glob
-work = sys.argv[1]
-files = sorted(glob.glob(os.path.join(work, 'fwd', '*.jpg')))
-n = len(files)
-for i, f in enumerate(files):
-    os.symlink(os.path.abspath(f), os.path.join(work, 'rev', '%05d.jpg' % (n - i)))
-PY
+  rm -rf "${WORK}/rev"; mkdir -p "${WORK}/rev"
+  # 倒放段取原始帧 0 … N-2（不含末帧），每块内部倒序，块按逆序拼接。
+  local last=$((n - 1)) start=0 end
+  : > "${WORK}/rev/list.txt"
+  while [ "${start}" -lt "${last}" ]; do
+    end=$((start + CHUNK)); [ "${end}" -gt "${last}" ] && end="${last}"
+    "${FF}" -y -hide_banner -loglevel error -i "${src}" -an \
+      -vf "${PREP},trim=start_frame=${start}:end_frame=${end},setpts=PTS-STARTPTS,reverse" \
+      -c:v libx264 -qp 0 -preset ultrafast -pix_fmt yuv420p "${WORK}/rev/$(printf '%05d' "${start}").mkv"
+    start="${end}"
+  done
+  ls "${WORK}/rev"/*.mkv | sort -r | sed "s/^/file '/; s/$/'/" > "${WORK}/rev/list.txt"
 
-  echo "=== look-${id} 单次编码（正放 + 倒放 + 音轨）==="
+  echo "=== look-${id}：单次编码（${CODEC}, CRF ${CRF}）==="
+  # 每帧 800 个采样（48000 / 60）。正放音轨补齐到 N 帧；倒放段为静音，
+  # 比视频短 0.1 秒，让文件时长严格等于 2N 帧。
+  local fwd_samples=$((n * 800)) rev_samples=$((n * 800 - 4800))
   # shellcheck disable=SC2086
   "${FF}" -y -hide_banner -loglevel error \
     -i "${src}" \
-    -framerate 60 -i "${WORK}/rev/%05d.jpg" \
-    -f lavfi -t 30 -i anullsrc=r=48000:cl=stereo \
-    -filter_complex "[0:v]setpts=PTS-STARTPTS,fps=60,format=yuv420p[vf];[1:v]scale=in_range=full:out_range=limited,setpts=PTS-STARTPTS,fps=60,format=yuv420p[vr];[vf][vr]concat=n=2:v=1:a=0[vout];[0:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[af];[2:a]atrim=0:12.04,aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[ar];[af][ar]concat=n=2:v=0:a=1[aout]" \
+    -f concat -safe 0 -i "${WORK}/rev/list.txt" \
+    -f lavfi -i anullsrc=r=48000:cl=stereo \
+    -filter_complex "[0:v]${PREP}[vf];[1:v]setpts=N/60/TB,tpad=stop=1:stop_mode=clone,format=yuv420p[vr];[vf][vr]concat=n=2:v=1:a=0[vout];[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=end_sample=${fwd_samples}[af];[2:a]atrim=end_sample=${rev_samples},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[ar];[af][ar]concat=n=2:v=0:a=1[aout]" \
     -map "[vout]" -map "[aout]" \
-    ${VIDEO_ARGS} ${AUDIO_ARGS} -movflags +faststart -f mp4 "${out}"
+    ${VIDEO_ARGS} ${COLOR_ARGS} ${AUDIO_ARGS} -movflags +faststart -f mp4 "${out}"
 
-  mv "${out}" "${src}"
-  echo "    完成：$(du -h "${src}" | cut -f1)，时长 $(duration_of "${src}")"
+  local frames
+  frames="$(frame_count "${out}")"
+  if [ "${frames}" != "$((n * 2))" ]; then
+    echo "look-${id}：帧数 ${frames} ≠ 预期 $((n * 2))，保留原文件不覆盖" >&2
+    rm -f "${out}"
+    return 1
+  fi
+  mv "${out}" "${PROJECT_DIR}/media/look-${id}.mp4"
+  echo "    完成：$(du -h "${PROJECT_DIR}/media/look-${id}.mp4" | cut -f1)，${frames} 帧"
 }
 
 if [ $# -gt 0 ]; then
