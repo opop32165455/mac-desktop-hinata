@@ -10,7 +10,8 @@
 #
 # 安装两个 launchd 用户代理（只用 macOS 自带的程序，不需要安装任何东西）：
 #   com.purple-moment-mac.server         本地服务：系统自带的 Apache（/usr/sbin/httpd），127.0.0.1:47070
-#   com.purple-moment-mac.desktop-state  桌面遮挡判断：系统自带的 osascript 运行 tools/desktop-state.js
+#   com.purple-moment-mac.desktop-state  常驻助手：系统自带的 osascript 运行 tools/desktop-state.js
+#                                        （离开桌面时静音 + 菜单栏跟随衣橱）
 # 配置文件在 ~/Library/LaunchAgents/，登录后自动运行，崩溃自动重启。
 set -u
 
@@ -51,10 +52,20 @@ wait_ready() {
 
 # 注册并启动一个 launchd 代理：load_agent LABEL PLIST
 load_agent() {
-  local label="$1" plist="$2" out=""
-  # 先卸载旧实例，避免重复加载报错
+  local label="$1" plist="$2" out="" try loaded=""
+  # 先卸载旧实例。bootout 是异步的：旧实例还没退干净时 bootstrap 会报 I/O 错误，
+  # 而此时 launchctl print 仍能查到「正在退出的旧实例」——不能把它当成加载成功，
+  # 否则随后的 kickstart 会作用在即将消失的旧实例上，服务最终不见。所以先等旧实例真正消失。
   launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1
-  if ! out="$(launchctl bootstrap "$DOMAIN" "$plist" 2>&1)"; then
+  for try in 1 2 3 4 5 6 7 8 9 10; do
+    launchctl print "$DOMAIN/$label" >/dev/null 2>&1 || break
+    sleep 0.5
+  done
+  for try in 1 2 3 4 5; do
+    if out="$(launchctl bootstrap "$DOMAIN" "$plist" 2>&1)"; then loaded=1; break; fi
+    sleep 1
+  done
+  if [ -z "$loaded" ]; then
     # 旧版系统的回退路径
     out="$(launchctl load -w "$plist" 2>&1)" || true
   fi
@@ -85,6 +96,8 @@ install_state_agent() {
 		<string>JavaScript</string>
 		<string>$STATE_SCRIPT</string>
 		<string>$STATE_FILE</string>
+		<string>0.5</string>
+		<string>$PROJECT_DIR</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -159,6 +172,8 @@ PLIST_EOF
 
 uninstall_agent() {
   remove_legacy
+  # 「菜单栏跟随衣橱」接管过系统桌面图片的话，恢复成用户原来的那张。
+  /usr/bin/osascript -l JavaScript "$STATE_SCRIPT" --restore "$STATE_DIR" >/dev/null 2>&1
   launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1
   launchctl bootout "$DOMAIN/$STATE_LABEL" >/dev/null 2>&1
   # 桌面状态文件停止更新后页面会自动忽略；这里一并清掉，避免残留。

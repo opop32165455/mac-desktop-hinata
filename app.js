@@ -37,7 +37,7 @@
   const defaults = {
     current: 3, favorites: [], freezes: LOOKS.map((look, index) => isPlayable(index) ? look.freeze : null),
     freezeRevision: FREEZE_REVISION, sound: false, volume: 35, brightness: 100,
-    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'loop', switchMode: 'rewind', muteAway: true
+    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'loop', switchMode: 'rewind', muteAway: true, menuBarFollow: true
   };
   // 「隔一段时间换一套」的间隔：0 = 不自动换，否则 1–60 分钟（旧版的 0/5/15/30 原样有效）。
   const intervalMinutes = value => {
@@ -67,6 +67,7 @@
     brightness: number(saved.brightness, defaults.brightness, 65, 115),
     autoHide: saved.autoHide !== false,
     muteAway: saved.muteAway !== false,
+    menuBarFollow: saved.menuBarFollow !== false,
     fit: saved.fit === 'cover' ? 'cover' : 'contain',
     interval: intervalMinutes(saved.interval),
     // 默认「往复循环」；已保存的选择（包括定格）保持不变。
@@ -244,6 +245,8 @@
     $('volumeValue').textContent = prefs.volume + '%';
     $('idleToggle').checked = prefs.autoHide;
     $('awayToggle').checked = prefs.muteAway;
+    $('menuBarToggle').checked = prefs.menuBarFollow;
+    syncMenuBar();
     document.querySelectorAll('[data-fit]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fit === prefs.fit)));
     document.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === prefs.interval)));
     renderInterval();
@@ -287,11 +290,13 @@
     video.muted = !prefs.sound || soundBlocked;
     video.volume = soundLevel();
   }
-  /* 离开桌面时静音：本地服务的 /desktop-state 报告普通窗口是否挡住了大部分主屏
-   * （tools/desktop-state.js，系统自带 osascript 运行，只读窗口位置，不需要屏幕录制权限）。挡住时把音量
-   * 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
-   * 没有这个接口（Wallpaper Engine、普通浏览器）时第一次请求失败就不再轮询，行为同以前。 */
-  let duck = 1, duckTarget = 1, duckTimer = 0, awayTimer = 0, awayProbe = 'unknown';
+  /* 离开桌面时静音：本地服务的 /desktop-state 报告「是否在看桌面」
+   * （tools/desktop-state.js，系统自带 osascript 运行，只读窗口位置与最前面的应用，不需要屏幕录制权限）。
+   * 判定以「最前面的应用是不是桌面本身（访达 / 程序坞 / 控制中心 / Plash）」为主，窗口覆盖率为兜底：
+   * 只看覆盖率时，没最大化的窗口（1920×1080 上通常只占 50%–70%）永远到不了阈值，切进程序也一直有声音。
+   * 不在桌面时把音量 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
+   * 没有这个接口（Wallpaper Engine、普通浏览器）时探不到就不再轮询，行为同以前。 */
+  let duck = 1, duckTarget = 1, duckTimer = 0, awayTimer = 0, awayProbe = 'unknown', awayFails = 0;
   function soundLevel() { return prefs.volume / 100 * duck * quiet; }
   /* 往复循环段静音：每套第一次正放到底有声音；一进入倒放（循环开始）就把音量淡到 0，
    * 循环里的倒放、正放都不出声。切换穿搭的倒带、换上来的新一套恢复声音。
@@ -323,22 +328,42 @@
     };
     step();
   }
+  /* 菜单栏跟随衣橱：Plash 的壁纸窗口从菜单栏下方开始，菜单栏那一条露出的是系统桌面图片。
+   * 当前穿搭、画面比例、明暗或开关变化时，经本地服务的 /wallpaper（tools/wallpaper.cgi）告诉
+   * 常驻助手（tools/desktop-state.js），由它生成衔接的图片并设为主屏的系统桌面图片；关闭时恢复原图。
+   * 只在 Plash 里通过本地 http 运行时生效；只在内容变化时发送。 */
+  let menuBarKey = '';
+  function syncMenuBar() {
+    if (!root.classList.contains('is-plash-mode') || location.protocol !== 'http:' || !isPlayable(current)) return;
+    const params = {look: LOOKS[current].id, fit: prefs.fit, b: Math.round(prefs.brightness), enabled: prefs.menuBarFollow ? 1 : 0};
+    const key = JSON.stringify(params);
+    if (key === menuBarKey) return;
+    menuBarKey = key;
+    fetch('wallpaper?' + new URLSearchParams(params), {headers: {'X-Purple': '1'}, cache: 'no-store'})
+      .then(response => { if (!response.ok) menuBarKey = ''; })
+      .catch(() => { menuBarKey = ''; });
+  }
   async function pollDesktop() {
+    syncMenuBar();
     clearTimeout(awayTimer);
-    if (!prefs.sound || !prefs.muteAway || awayProbe === 'missing' || location.protocol === 'file:') { rampDuck(1); return; }
+    // 关掉声音或关掉「离开桌面时静音」时不轮询；重新打开时由按钮事件重新启动。
+    if (!prefs.sound || !prefs.muteAway || location.protocol === 'file:') { awayProbe = 'unknown'; awayFails = 0; rampDuck(1); return; }
+    let delay = 1000;
     try {
       const response = await fetch('desktop-state', {cache: 'no-store'});
       if (!response.ok) throw new Error('status ' + response.status);
       const state = await response.json();
-      awayProbe = 'ok';
+      awayProbe = 'ok'; awayFails = 0;
       // 桌面状态助手每秒更新一次；超过 10 秒没更新（助手停了）就当作在桌面，不再静音。
       const fresh = !state.at || Date.now() / 1000 - state.at < 10;
-      if (prefs.sound && prefs.muteAway) rampDuck(fresh && state.onDesktop === false ? 0 : 1);
+      rampDuck(fresh && state.onDesktop === false ? 0 : 1);
     } catch (_) {
-      // 只有从没成功过才判定为「没有这项能力」；偶发失败下次再试。
-      if (awayProbe !== 'ok') { awayProbe = 'missing'; rampDuck(1); return; }
+      // 登录后页面可能比状态助手先就绪（首次请求 404），单次失败不能就此判死：
+      // 连续 3 次都失败才认定「没有这项能力」，之后仍以 30 秒间隔重试，助手晚起来也能自愈。
+      awayFails++;
+      if (awayFails >= 3) { awayProbe = 'missing'; rampDuck(1); delay = 30000; }
     }
-    awayTimer = setTimeout(pollDesktop, 1500);
+    awayTimer = setTimeout(pollDesktop, delay);
   }
   // 在用户手势里对两个牌组各 play() 一次，WebKit 便会解除该元素的带声播放限制。
   // 暂停中的牌组立即 pause() 并恢复原静音状态，不会出声、也不会挪动画面。
@@ -835,6 +860,7 @@
       rampQuiet(1, 0);
       applySound(true);
       $('still').src = `images/look-${LOOKS[next].id}.jpg`;
+      syncMenuBar();
       $('still').alt = LOOKS[next].name + '穿搭推荐定格';
       document.querySelector('.ambient').style.backgroundImage = `url("images/ambient-${LOOKS[next].id}.jpg")`;
       if (page !== pageFor(next)) { page = pageFor(next); renderCards(false); } else updateCards();
@@ -997,6 +1023,7 @@
       await Promise.all([moved ? painted : delay(40), stillReady]);
       if (task.id !== operation) return;
       $('still').src = `images/look-${LOOKS[index].id}.jpg`;
+      syncMenuBar();
       $('still').alt = LOOKS[index].name + '穿搭推荐定格';
       document.querySelector('.ambient').style.backgroundImage = `url("images/ambient-${LOOKS[index].id}.jpg")`;
       await delay(40);
@@ -1339,6 +1366,7 @@
   $('volume').addEventListener('input', event => { prefs.volume = Number(event.target.value); applyPrefs(); persist(); });
   $('idleToggle').addEventListener('change', event => { prefs.autoHide = event.target.checked; applyPrefs(); persist(); });
   $('awayToggle').addEventListener('change', event => { prefs.muteAway = event.target.checked; applyPrefs(); persist(); pollDesktop(); });
+  $('menuBarToggle').addEventListener('change', event => { prefs.menuBarFollow = event.target.checked; applyPrefs(); persist(); });
   // 设置面板里的「循环 / 定格」开关：循环即往复播放，定格即停在自选的一帧。
   $('loopToggle').addEventListener('change', event => { setPlaybackMode(event.target.checked ? 'loop' : 'freeze'); });
   // HTML buttons keep settings inside the web renderer across wallpaper hosts.

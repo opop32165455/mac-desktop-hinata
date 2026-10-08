@@ -6,7 +6,8 @@
 #   - 只监听 127.0.0.1，不对外网暴露；
 #   - 原生支持 Range（206）：Safari / Plash 播放与拖动 MP4 必需；
 #   - 所有响应带 Cache-Control: no-cache，改了文件 Plash reload 即可看到；
-#   - /desktop-state 指向 tools/desktop-state.js 写出的 JSON（「离开桌面时静音」）。
+#   - /desktop-state 指向 tools/desktop-state.js 写出的 JSON（「离开桌面时静音」）；
+#   - /wallpaper 是唯一的 CGI（tools/wallpaper.cgi），页面用它请求「菜单栏跟随衣橱」。
 # 端口固定，因为 localStorage 偏好（收藏、自选定格）与访问地址绑定，换端口会导致已有偏好丢失。
 #
 # 注意：所有变量引用一律写成 ${var} 形式。macOS 自带 bash 3.2 在
@@ -46,7 +47,7 @@ MIME_TYPES="/private/etc/apache2/mime.types"
   printf 'ServerName 127.0.0.1\n'
   printf 'PidFile "%s/httpd.pid"\n' "${STATE_DIR}"
   printf 'ErrorLog "/dev/stderr"\n'
-  for name in mpm_prefork authz_core unixd mime dir headers log_config setenvif alias; do module "${name}"; done
+  for name in mpm_prefork authz_core unixd mime dir headers log_config setenvif alias cgi env; do module "${name}"; done
   cat <<CONF_EOF
 StartServers 2
 MinSpareServers 1
@@ -85,6 +86,14 @@ Alias /desktop-state "${PUBLIC_DIR}/desktop-state.json"
   ForceType application/json
   Header set Cache-Control "no-store"
 </Location>
+
+# 「菜单栏跟随衣橱」的请求入口：只这一个 CGI，参数在脚本里严格校验。
+ScriptAlias /wallpaper "${ROOT}/tools/wallpaper.cgi"
+<Files "wallpaper.cgi">
+  Options +ExecCGI
+  Require all granted
+  SetEnv PURPLE_STATE_DIR "${STATE_DIR}"
+</Files>
 
 Header setifempty Cache-Control "no-cache"
 

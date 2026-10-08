@@ -59,7 +59,10 @@
 
 - **本地服务**：launchd 代理 `com.purple-moment-mac.server`（`~/Library/LaunchAgents/`）运行 `tools/plash-server.sh`，生成 `~/Library/Application Support/purple-desktop/httpd.conf` 后前台运行系统 Apache。只监听 `127.0.0.1:47070`；原生 Range；全部响应 `Cache-Control: no-cache`；拒绝隐藏文件。模块路径从 `/etc/apache2/httpd.conf` 读取以适配不同 macOS 版本。
   Plash 不支持 `file://`，所以必须有本地 http 服务。
-- **桌面状态助手**：代理 `com.purple-moment-mac.desktop-state` 用 osascript 运行 `tools/desktop-state.js`，每秒把主屏被普通窗口覆盖的比例写到 `.../purple-desktop/public/desktop-state.json`，Apache 以 `/desktop-state` 提供。只读窗口位置，不需要屏幕录制权限。页面超过 10 秒未见更新就不做静音。
+- **桌面状态助手**：代理 `com.purple-moment-mac.desktop-state` 用 osascript 运行 `tools/desktop-state.js`，每秒把「用户是否在看桌面」写到 `.../purple-desktop/public/desktop-state.json`，Apache 以 `/desktop-state` 提供。判据两条，满足其一即「不在桌面」：① 最前面的应用不是桌面本身（访达 / 程序坞 / 控制中心 / Plash）且它在主屏上有可见窗口；② 普通窗口挡住主屏超过 50%（兜底）。只读窗口位置与最前面的应用名，不需要屏幕录制权限。页面超过 10 秒未见更新就不做静音。
+  **两个坑不要踩回去**：① 不要退回「只看覆盖率」——单个没最大化的窗口在 1920×1080 上通常只占 50%–70%，够不到阈值，切进程序后仍会出声；② 脚本里必须用 `NSRunLoop.runUntilDate` 等待，**不能用 `delay()`**——`delay()` 阻塞运行循环，NSWorkspace 收不到「前台应用变了」的通知，`frontmostApplication` 会一直停在进程启动时的那个应用。
+- **菜单栏跟随衣橱**：Plash 的壁纸窗口从菜单栏下方开始，菜单栏那一条露出的是系统桌面图片。页面在穿搭 / 画面比例 / 明暗 / 开关变化时请求 `/wallpaper?look=05&fit=contain&b=100&enabled=1`（必须带请求头 `X-Purple: 1`），由 `tools/wallpaper.cgi`（Apache 唯一的 CGI，严格校验参数）写入 `.../purple-desktop/wallpaper-request.json`；常驻助手 `desktop-state.js` 每秒读取，用 AppKit 生成与页面顶边衔接的图片（背景层铺满 + 定格图按页面比例放在菜单栏下方 + 菜单栏那一条用画面顶边镜像补齐），缓存在 `.../purple-desktop/wallpapers/`，设为**主屏**的系统桌面图片。
+  `wallpaper-sync.json` 记录接管前的原图（`backup`）：关闭开关或卸载（`plash-setup.sh stop` 调 `desktop-state.js --restore`）时恢复；用户自己换了桌面图片（既不是我们的图也不是原图）就标记 `paused`，不再覆盖，关掉再打开开关才重新接管。桌面图片按「空间」记录，切到别的空间会在那里补设一次。
 - **日志**：`/tmp/purple-plash-access.log`（页面文件与每个视频的首次请求）、`/tmp/purple-plash-server.log`（错误输出）。
 - **端口**：固定 47070。页面偏好在 `localStorage`，按地址（含端口）隔离，换端口会回到默认。换端口：`PLASH_PORT=端口 bash tools/plash-setup.sh start`，并在 Plash 改用新地址。
 - **Plash 适配**：`plash-adapter.js`（先于 `app.js` 加载）+ `plash.css`，只在 Plash 中生效：固定上报页面可见、首次进入设默认播放方式（往复）与换装间隔、隐藏顶部光边、点选前预解码定格图。
