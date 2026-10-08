@@ -9,15 +9,15 @@
  *   1. 非浏览模式：由 plash.css 隐藏全部界面，呈现纯净壁纸。
  *   2. 可见性修补：壁纸不存在"隐藏"状态，固定上报为可见，
  *      避免宿主因 visibilitychange 而暂停视频。
- *   3. 默认播放方式设为「全部轮播」，让壁纸持续播放并自动换装。
- *   4. 默认开启定时换装（15 分钟），作为「定格模式」下的兜底。
+ *   3. 默认播放方式设为「往复循环」，让壁纸持续播放。
+ *   4. 默认开启定时换装（15 分钟），定格与往复两种模式下都生效。
  *   5. 切换穿搭前预解码目标大图，消除 WebKit 降采样解码的"先模糊后清晰"。
  *   6. 开启 Plash 浏览模式后界面恢复，可正常点击操作。
  *
  * 调试参数（附加在地址末尾）：
  *   ?plash=1 / ?plash=0             强制开启或关闭适配
- *   ?playback=freeze|single|all|loop    指定播放方式（默认 all）
- *   ?interval=0|5|15|30             指定定格模式下的换装间隔
+ *   ?playback=freeze|single|all|loop    指定播放方式（默认 loop）
+ *   ?interval=0–60                  指定换装间隔（分钟，0 = 不自动换）
  */
 (function () {
   'use strict';
@@ -26,8 +26,7 @@
   var ROTATION_MARK = KEY + '.plash-rotation-v1';
   var PLAYBACK_MARK = KEY + '.plash-playback-v1';
   var DEFAULT_INTERVAL = 15;
-  var DEFAULT_PLAYBACK = 'all';
-  var INTERVALS = [0, 5, 15, 30];
+  var DEFAULT_PLAYBACK = 'loop';
   var PLAYBACKS = ['freeze', 'single', 'all', 'loop'];
 
   var root = document.documentElement;
@@ -71,7 +70,7 @@
     document.dispatchEvent(new Event('visibilitychange'));
   }
 
-  /* 2. 播放方式：默认「全部轮播」，此后尊重用户在播放菜单中的选择。 */
+  /* 2. 播放方式：默认「往复循环」，此后尊重用户在播放菜单中的选择。 */
   var playbackApplied = false;
   function setupPlayback() {
     if (playbackApplied) return;
@@ -90,20 +89,28 @@
     playbackApplied = true;
   }
 
-  /* 3. 换装间隔：仅「定格模式」下生效，作为静止壁纸的兜底。 */
+  /* 3. 换装间隔：定格与往复模式下生效。快捷按钮之外的分钟数通过滑杆写入。 */
+  function chooseInterval(value) {
+    var button = document.querySelector('#autoOptions [data-interval="' + value + '"]');
+    if (button) { button.click(); return; }
+    var range = document.getElementById('intervalRange');
+    if (!range) return;
+    range.value = String(value);
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   var rotationApplied = false;
   function setupRotation() {
     if (rotationApplied) return;
     var asked = params.get('interval');
     if (asked !== null) {
-      var value = Number(asked);
-      if (INTERVALS.indexOf(value) === -1) return;
-      choose('#autoOptions [data-interval="' + value + '"]');
+      var value = Math.round(Number(asked));
+      if (!(value >= 0 && value <= 60)) return;
+      chooseInterval(value);
       rotationApplied = true;
       return;
     }
     if (!readFlag(ROTATION_MARK) && Number(storedPrefs().interval) === 0) {
-      choose('#autoOptions [data-interval="' + DEFAULT_INTERVAL + '"]');
+      chooseInterval(DEFAULT_INTERVAL);
     }
     writeFlag(ROTATION_MARK);
     rotationApplied = true;

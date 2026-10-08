@@ -99,7 +99,7 @@
     <div id="fitOptions" class="setting-options" role="group" aria-labelledby="fitLabel">
       <button type="button" data-fit="contain" aria-pressed="true">完整画面</button><button type="button" data-fit="cover" aria-pressed="false">铺满屏幕</button>
     </div>
-    <label class="setting-line toggle-line" for="loopToggle"><span>入场往复循环<small>正放到片尾后倒放回来，来回不停</small></span><input id="loopToggle" type="checkbox"><span class="switch"></span></label>
+    <label class="setting-line toggle-line" for="loopToggle"><span>入场往复循环<small>正放到片尾后倒放回来，来回不停</small></span><input id="loopToggle" type="checkbox" checked><span class="switch"></span></label>
     <div class="setting-line" id="switchLabel">切换穿搭的方式</div>
     <div id="switchOptions" class="setting-options" role="group" aria-labelledby="switchLabel">
       <button type="button" data-switch-mode="rewind" aria-pressed="true">倒带</button><button type="button" data-switch-mode="cut" aria-pressed="false">闪入</button>
@@ -124,7 +124,11 @@
     <div id="autoOptions" class="setting-options" role="group" aria-labelledby="autoLabel">
       <button type="button" data-interval="0" aria-pressed="true">等我来选</button><button type="button" data-interval="5" aria-pressed="false">5 分钟</button><button type="button" data-interval="15" aria-pressed="false">15 分钟</button><button type="button" data-interval="30" aria-pressed="false">30 分钟</button>
     </div>
-    <p id="autoLoopNote" class="auto-loop-note" hidden>循环播放中 · 回到定格模式后恢复这个间隔</p>
+    <div id="intervalRow" class="interval-row">
+      <label class="setting-line" for="intervalRange"><span>换装间隔</span><output id="intervalValue">不自动换</output></label><input id="intervalRange" type="range" min="1" max="60" step="1" value="15" aria-label="换装间隔（分钟）">
+      <div class="interval-scale" aria-hidden="true"><span>1 分钟</span><span>60 分钟</span></div>
+    </div>
+    <p id="autoLoopNote" class="auto-loop-note" hidden>轮播中 · 换回定格或往复循环后恢复这个间隔</p>
     <div class="reset-setting">
       <button type="button" id="resetSettingsButton" class="layout-button reset-button" aria-expanded="false" aria-controls="resetConfirm">
         <span>恢复初始状态</span><svg aria-hidden="true"><use href="#i-repeat"/></svg>

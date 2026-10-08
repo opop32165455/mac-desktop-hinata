@@ -35,8 +35,15 @@
   const defaults = {
     current: 3, favorites: [], freezes: LOOKS.map((look, index) => isPlayable(index) ? look.freeze : null),
     freezeRevision: FREEZE_REVISION, sound: false, volume: 35, brightness: 100,
-    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'freeze', switchMode: 'rewind'
+    autoHide: true, fit: 'contain', interval: 0, playbackMode: 'loop', switchMode: 'rewind'
   };
+  // 「隔一段时间换一套」的间隔：0 = 不自动换，否则 1–60 分钟（旧版的 0/5/15/30 原样有效）。
+  const intervalMinutes = value => {
+    const minutes = Math.round(Number(value));
+    return Number.isFinite(minutes) && minutes >= 0 && minutes <= 60 ? minutes : 0;
+  };
+  // 调试用：?minuteMs=2000 把「1 分钟」缩短为 2 秒，便于验证定时换装。
+  const MINUTE = Number(new URLSearchParams(location.search).get('minuteMs')) || 60000;
   const PREVIOUS_FREEZES = { '02': 11.7, '05': 11.2, '07': 10.5, '08': 11.7, '09': 10.5 };
   function initialFreeze(look, index) {
     if (!isPlayable(index)) return null;
@@ -58,8 +65,9 @@
     brightness: number(saved.brightness, defaults.brightness, 65, 115),
     autoHide: saved.autoHide !== false,
     fit: saved.fit === 'cover' ? 'cover' : 'contain',
-    interval: [0, 5, 15, 30].includes(Number(saved.interval)) ? Number(saved.interval) : 0,
-    playbackMode: ['single', 'all', 'favorites', 'loop'].includes(saved.playbackMode) ? saved.playbackMode : 'freeze',
+    interval: intervalMinutes(saved.interval),
+    // 默认「往复循环」；已保存的选择（包括定格）保持不变。
+    playbackMode: ['freeze', 'single', 'all', 'favorites', 'loop'].includes(saved.playbackMode) ? saved.playbackMode : defaults.playbackMode,
     // 切换穿搭的方式：'rewind' 先倒放回开头再换（默认），'cut' 直接切换。
     switchMode: saved.switchMode === 'cut' ? 'cut' : 'rewind',
     nativeValues: saved.nativeValues && typeof saved.nativeValues === 'object' ? saved.nativeValues : {}
@@ -234,15 +242,24 @@
     $('idleToggle').checked = prefs.autoHide;
     document.querySelectorAll('[data-fit]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fit === prefs.fit)));
     document.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === prefs.interval)));
+    renderInterval();
     document.querySelectorAll('[data-switch-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.switchMode === prefs.switchMode)));
     applySound();
-    spare.muted = true;
+    // 预滚中的备用牌组已按声音设置起播，只在关掉声音时跟着静音。
+    if (!prerolling || !prefs.sound) spare.muted = true;
     renderPlaybackMode();
     icon($('soundButton'), prefs.sound ? 'volume' : 'mute');
     $('soundButton').setAttribute('aria-label', prefs.sound ? '关闭声音' : '开启声音');
     $('soundButton').title = prefs.sound ? '关闭声音' : '开启声音';
     $('soundButton').setAttribute('aria-pressed', String(prefs.sound));
     activity(true);
+  }
+  // 滑杆只表示分钟数；关闭（等我来选）时滑杆停在上次的值，标签写明不自动换。
+  let lastInterval = prefs.interval || 15;
+  function renderInterval() {
+    if (prefs.interval) lastInterval = prefs.interval;
+    $('intervalRange').value = lastInterval;
+    $('intervalValue').textContent = prefs.interval ? `每 ${prefs.interval} 分钟` : '不自动换';
   }
   function activity(force = false) {
     if (!force && performance.now() - lastActivity < 120) return;
@@ -423,10 +440,21 @@
     return Boolean(prefetch) && prefetch.element === spare && prefetch.index === current &&
       spare.readyState >= 2 && !spare.seeking && (prerolling || Math.abs(spare.currentTime - parkTime()) < .05);
   }
+  // 预滚直接按最终的声音状态起播，换牌时不再改 muted：WebKit 对「没有用户手势时取消静音」
+  // 会直接暂停元素，旧做法因此被迫退回静音，壁纸收不到点击，声音就一直不回来。
+  // 主牌组此时在倒放段（本来无声），备用牌组提前 0.3 秒出声无妨。
+  // 之前被拒过也每一轮在这里重试带声；仍被拒就静音继续预滚，画面不受影响。
   function startPreroll() {
     prerolling = true; turnError = null;
-    spare.muted = true;
-    nativePlay.get(spare)().catch(() => { if (prerolling) stopPreroll(); });
+    const deck = spare;
+    deck.volume = prefs.volume / 100;
+    deck.muted = !prefs.sound;
+    nativePlay.get(deck)().catch(error => {
+      if (!prerolling || deck !== spare) return;
+      if (error?.name !== 'NotAllowedError' || deck.muted) { stopPreroll(); return; }
+      deck.muted = true;
+      nativePlay.get(deck)().catch(() => { if (prerolling && deck === spare) stopPreroll(); });
+    });
   }
   // 预滚中断后，备用牌组已离开停靠点，必须作废并重新准备。
   function stopPreroll() {
@@ -483,17 +511,20 @@
   }
   // 新牌组从没被用户手势播放过：开着声音时 WebKit 可能拒绝它带声起播（或取消静音时直接暂停它），
   // 以前这个拒绝被吞掉，画面就永远停在折返点。被拒时退回静音继续播，画面优先。
+  // 换上来的牌组已在预滚中以最终声音状态播放，这里不改 muted，只同步音量与状态。
   function startLoopDeck(deck) {
     const id = operation;
-    const muteAndPlay = () => {
-      if (deck !== video || id !== operation || phase !== 'playing' || suspended() || deck.muted) return;
-      soundBlocked = true; applySound();
+    deck.volume = prefs.volume / 100;
+    if (!prefs.sound) deck.muted = true;
+    soundBlocked = prefs.sound && deck.muted;
+    deck.play().catch(() => {});
+    // 兜底：万一新牌组没走起来，静音再播，画面优先；下一轮预滚会再试带声。
+    setTimeout(() => {
+      if (deck !== video || id !== operation || phase !== 'playing' || suspended() || !deck.paused) return;
+      if (prefs.sound) soundBlocked = true;
+      deck.muted = true;
       deck.play().catch(() => {});
-    };
-    applySound();
-    deck.play().catch(error => { if (error?.name === 'NotAllowedError') muteAndPlay(); });
-    // 预滚中的牌组 play() 会立即成功，但随后取消静音仍可能被 WebKit 暂停，稍后再核对一次。
-    setTimeout(() => { if (deck.paused) muteAndPlay(); }, 120);
+    }, 120);
   }
   function cancelSpin() {
     ++spinId;
@@ -521,6 +552,8 @@
   // A transition starts at the real ended event, never at a recommended freeze.
   function cycling() { return prefs.playbackMode !== 'freeze'; }
   function looping() { return prefs.playbackMode === 'loop'; }
+  // 单套 / 全部 / 收藏轮播自己会换装，此时「隔一段时间换一套」暂不生效；定格与往复都支持。
+  function rotating() { return cycling() && !looping(); }
   // 往复循环依赖合并文件：[0, d] 为正放、[d, 2d] 为整段倒放（d = 单次入场片长）。
   const DEFAULT_PIVOT = 7;
   const FRAME = 1 / 60;
@@ -561,9 +594,11 @@
     });
     const loopToggle = $('loopToggle');
     if (loopToggle) loopToggle.checked = looping();
-    $('autoOptions').classList.toggle('is-dormant', cycling());
-    $('autoOptions').querySelectorAll('button').forEach(button => { button.disabled = cycling(); });
-    $('autoLoopNote').hidden = !cycling();
+    $('autoOptions').classList.toggle('is-dormant', rotating());
+    $('autoOptions').querySelectorAll('button').forEach(button => { button.disabled = rotating(); });
+    $('intervalRow').classList.toggle('is-dormant', rotating());
+    $('intervalRange').disabled = rotating();
+    $('autoLoopNote').hidden = !rotating();
     if (phase === 'playing' && cycling()) $('timelineState').textContent = labels[prefs.playbackMode];
     if (phase === 'transition') {
       const paused = transition?.userPaused;
@@ -1080,7 +1115,7 @@
       if (changed('brightness')) prefs.brightness = number(properties.brightness.value, prefs.brightness, 65, 115);
       if (changed('autohide')) prefs.autoHide = Boolean(properties.autohide.value);
       if (changed('fit')) prefs.fit = properties.fit.value === 'cover' ? 'cover' : 'contain';
-      if (changed('autoswitch')) prefs.interval = [0,5,15,30].includes(Number(properties.autoswitch.value)) ? Number(properties.autoswitch.value) : 0;
+      if (changed('autoswitch')) prefs.interval = intervalMinutes(properties.autoswitch.value);
       const lookChanged = changed('look');
       if (['sound', 'volume', 'brightness', 'autohide', 'fit', 'autoswitch', 'look'].every(key => Object.prototype.hasOwnProperty.call(prefs.nativeValues, key))) {
         delete prefs.nativeValues.__resetBaseline;
@@ -1154,6 +1189,8 @@
     $('playButton').title = '再看一次入场'; $('playButton').setAttribute('aria-label', '再看一次入场');
     readyControls(false); renderPlaybackMode();
     toast('已回到初始状态。', '设置已恢复');
+    // 默认是往复循环：恢复后直接开始播放。
+    if (cycling()) selectLook(current, {quiet: true});
   });
 
 
@@ -1235,8 +1272,12 @@
     if (!button) return;
     prefs.switchMode = button.dataset.switchMode; applyPrefs(); persist();
   });
+  $('intervalRange').addEventListener('input', event => {
+    if (rotating()) return;
+    prefs.interval = intervalMinutes(event.target.value) || 1; lastChange = Date.now(); applyPrefs(); persist();
+  });
   $('autoOptions').addEventListener('click', event => {
-    if (cycling()) return;
+    if (rotating()) return;
     const button = event.target.closest('[data-interval]');
     if (!button) return;
     prefs.interval = Number(button.dataset.interval); lastChange = Date.now(); applyPrefs(); persist();
@@ -1307,8 +1348,8 @@
     updateClock();
     // 往复模式没有「定格」态，改用 playing 作为可切换条件；触发后会先倒带再换装。
     const switchReady = looping() ? (phase === 'playing' && !rewinding) : (!cycling() && phase === 'held');
-    if (switchReady && prefs.interval && !panel && !modeOpen && !spinning && Date.now() - lastChange >= prefs.interval * 60000) randomLook();
-  }, 15000);
+    if (switchReady && prefs.interval && !panel && !modeOpen && !spinning && Date.now() - lastChange >= prefs.interval * MINUTE) randomLook();
+  }, Math.min(15000, MINUTE / 4));
   function showRememberedStill() {
     $('still').src = `images/look-${LOOKS[current].id}.jpg`;
     $('still').alt = LOOKS[current].name + '穿搭推荐定格';

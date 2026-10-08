@@ -17,29 +17,14 @@
 			"autoswitch" : 
 			{
 				"index" : 6,
-				"options" : 
-				[
-					{
-						"label" : "等我来选",
-						"value" : "0"
-					},
-					{
-						"label" : "每 5 分钟",
-						"value" : "5"
-					},
-					{
-						"label" : "每 15 分钟",
-						"value" : "15"
-					},
-					{
-						"label" : "每 30 分钟",
-						"value" : "30"
-					}
-				],
 				"order" : 106,
-				"text" : "自动换装间隔",
-				"type" : "combo",
-				"value" : "0"
+				"text" : "自动换装间隔（分钟，0 = 不换）",
+				"type" : "slider",
+				"min" : 0,
+				"max" : 60,
+				"step" : 1,
+				"fraction" : false,
+				"value" : 0
 			},
 			"brightness" : 
 			{
