@@ -79,6 +79,7 @@
   let loadedLook = -1;
   let frameHandle = null;
   let frameKind = null;
+  let frameDeck = null;
   let spinId = 0;
   let spinning = false;
   let rewinding = false;
@@ -270,15 +271,17 @@
 
   function stopWatcher() {
     if (frameHandle !== null) {
-      if (frameKind === 'video') video.cancelVideoFrameCallback(frameHandle);
-      else cancelAnimationFrame(frameHandle);
+      // 牌组可能已经对调，必须向「注册时」的那个牌组取消，不能按当前的 video 取消。
+      if (frameKind === 'video' && frameDeck) frameDeck.cancelVideoFrameCallback(frameHandle);
+      else if (frameKind === 'animation') cancelAnimationFrame(frameHandle);
     }
-    frameHandle = null;
+    frameHandle = null; frameDeck = null;
   }
   function watchFrames() {
     stopWatcher();
     if (phase !== 'playing' || suspended()) return;
     const schedule = () => {
+      frameDeck = video;
       if (typeof video.requestVideoFrameCallback === 'function') {
         frameKind = 'video'; frameHandle = video.requestVideoFrameCallback(callback);
       } else { frameKind = 'animation'; frameHandle = requestAnimationFrame(callback); }
@@ -290,10 +293,13 @@
       const d = clipDuration();
       updateProgress(Math.min(t, d));
       if (looping()) {
-        // 合并文件 [0, d] 正放、[d, 2d] 倒放。倒放到折返点时跳回正放段，
-        // 继续正放——如此往复，每个来回只需一次 seek。
-        if (t >= 2 * d - pivotTime() - .006) video.currentTime = pivotTime();
-        schedule();
+        // 合并文件 [0, d] 正放、[d, 2d] 倒放。倒放到折返点时回到正放段继续正放。
+        // 备用牌组若已定位好折返点就直接硬切过去（切点两侧是同一帧，因此无缝），
+        // 那次向后 seek 便发生在看不见的牌组上；牌组未就绪时退回普通 seek。
+        if (t >= 2 * d - pivotTime() - .006) {
+          if (pivotReady()) swapLoopDecks();
+          else { video.currentTime = pivotTime(); schedule(); }
+        } else schedule();
       } else if (!cycling() && t >= freezeTime() - .006) settle();
       // 文件是「正放 + 倒放」的合并体，片尾要靠时间判断，不能等 ended（那是 2d 处）。
       else if (t >= d - .006) rewindThenAdvance();
@@ -347,6 +353,46 @@
     // 倒带期间若用户点了别的穿搭，交给那次 selectLook 处理，这里不再自动换装。
     if (current !== before) return;
     advanceLoop();
+  }
+  /* 往复的折返点需要一次向后 seek，而 WebKit 的 seek 会清空解码管线并重新缓冲，
+   * 产生一次可见顿挫。实测折返点距最近关键帧只差 0.33 秒（20 帧），
+   * 所以瓶颈不是解码量，改关键帧间隔也无济于事 —— 只能让这次 seek 不被看见。
+   * 做法：备用牌组提前定位到折返点，到点时硬切过去。切点两侧是同一帧，因此无缝。 */
+  function pivotReady() {
+    return Boolean(prefetch) && prefetch.element === spare && prefetch.index === current &&
+      spare.readyState >= 2 && !spare.seeking && Math.abs(spare.currentTime - pivotTime()) < .05;
+  }
+  function preparePivot() {
+    if (!looping() || prefetch || phase === 'loading' || phase === 'transition') return;
+    const pivot = pivotTime();
+    const item = {index: current, element: spare, controller: new AbortController(), promise: null};
+    prefetch = item;
+    const deck = spare, signal = item.controller.signal;
+    deck.pause(); deck.muted = true; deck.style.opacity = '0'; deck.style.zIndex = '1';
+    item.promise = (async () => {
+      if (deck.dataset.look !== LOOKS[current].id || deck.readyState < 2) await loadSource(deck, current, signal);
+      if (Math.abs(deck.currentTime - pivot) > .02 || deck.seeking) {
+        await mediaEvent('seeked', signal, () => { deck.currentTime = pivot; }, deck);
+      }
+      if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+      deck.dataset.look = LOOKS[current].id;
+      return deck;
+    })();
+    // Speculative preparation is silent; a failed handoff falls back to a plain seek.
+    item.promise.catch(() => {});
+  }
+  function swapLoopDecks() {
+    const outgoing = video;
+    video = spare; spare = outgoing;
+    video.id = 'film'; spare.id = 'filmNext';
+    video.muted = !prefs.sound; video.volume = prefs.volume / 100;
+    video.style.opacity = '1'; video.style.zIndex = '1'; video.classList.add('visible');
+    spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1'; spare.muted = true;
+    prefetch = null;
+    video.play().catch(() => {});
+    watchFrames();
+    // 换下来的牌组立刻为下一轮定位折返点（下一轮还有约 10 秒余量）。
+    preparePivot();
   }
   function cancelSpin() {
     ++spinId;
@@ -486,7 +532,9 @@
     return item.promise;
   }
   function primeLoop() {
-    if (!cycling() || looping() || !['playing', 'paused'].includes(phase)) return;
+    if (!cycling() || !['playing', 'paused'].includes(phase)) return;
+    // 往复模式不换装，改为让备用牌组提前定位到折返点。
+    if (looping()) { preparePivot(); return; }
     const next = nextLoopIndex();
     if (next !== null) prepareNext(next);
   }
