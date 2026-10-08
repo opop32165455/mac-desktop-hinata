@@ -76,6 +76,9 @@ class RangeHandler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header('Accept-Ranges', 'bytes')
+        # 每次都向服务器确认（未改动时只回 304），否则 Plash 的 WebKit 会按启发式缓存
+        # 继续用旧的 catalog.js / app.js，改了配置 reload 也看不到。
+        self.send_header('Cache-Control', 'no-cache')
         super().end_headers()
 
     def do_GET(self):
@@ -156,8 +159,12 @@ class RangeHandler(SimpleHTTPRequestHandler):
             pass
 
     def log_message(self, format, *args):
-        # launchd 常驻，日志只留错误，避免 /tmp 日志随播放无限增长。
-        pass
+        # launchd 常驻：视频分段请求与 /desktop-state 轮询太多，不记；只记页面文件，
+        # 便于确认 Plash reload 后确实取到了新版本。
+        path = self.path.split('?', 1)[0]
+        if path.startswith('/media/') or path == '/desktop-state':
+            return
+        sys.stderr.write('%s %s\n' % (self.log_date_time_string(), format % args))
 
     def log_error(self, format, *args):
         sys.stderr.write('%s - %s\n' % (self.address_string(), format % args))
