@@ -59,7 +59,8 @@ body[data-playback-mode=single] #timelineState,body[data-playback-mode=all] #tim
 #autoOptions.is-dormant button{cursor:default}
 .auto-loop-note{font-size:9px;color:#b9ad99;letter-spacing:.4px;margin:9px 0 0;line-height:1.7}
 #film,#filmNext{opacity:0;z-index:1}
-#film.visible{opacity:1}
+/* .999, not 1: an opaque video gets promoted by macOS to a hardware overlay plane a few seconds into playback, which drew a white glow at the top edge (it vanished whenever screen recording forced normal compositing). */
+#film.visible{opacity:.999}
 #filmNext{pointer-events:none}
 #curtain{z-index:3}.scene-shade,.edge-light{z-index:4;pointer-events:none}
 body.is-loop-transition .timeline-track{opacity:.6}

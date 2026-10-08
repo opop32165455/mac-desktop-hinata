@@ -25,6 +25,10 @@
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const number = (value, fallback, lo, hi) => Number.isFinite(Number(value)) ? clamp(Number(value), lo, hi) : fallback;
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // Safari / Plash (WebKit) decode 4K VP9 slowly; they get the HEVC MP4 twin instead.
+  const UA = navigator.userAgent;
+  const MEDIA_EXT = /AppleWebKit/.test(UA) && !/Chrome|Chromium|CriOS|Edg/.test(UA) &&
+    document.createElement('video').canPlayType('video/mp4; codecs="hvc1.1.6.L153.B0"') ? 'mp4' : 'webm';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) {}
   const FREEZE_REVISION = 1;
@@ -414,11 +418,7 @@
     const deck = item.element, signal = item.controller.signal;
     deck.pause(); deck.muted = true; deck.style.opacity = '0'; deck.style.zIndex = '1';
     item.promise = (async () => {
-      if (deck.dataset.look !== LOOKS[index].id || deck.readyState < 2) {
-        await mediaEvent('loadeddata', signal, () => {
-          deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.webm`; deck.load();
-        }, deck);
-      }
+      if (deck.dataset.look !== LOOKS[index].id || deck.readyState < 2) await loadSource(deck, index, signal);
       if (deck.currentTime > .002 || deck.seeking) await mediaEvent('seeked', signal, () => { deck.currentTime = 0; }, deck);
       if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
       deck.dataset.look = LOOKS[index].id;
@@ -480,7 +480,7 @@
     readyControls(false); renderPlaybackMode();
     $('loading').hidden = true;
     try {
-      const incoming = await prepareNext(next);
+      const [incoming] = await Promise.all([prepareNext(next), decodeStill(next)]);
       await waitForTransition(tx);
       // Let the completed motion breathe; never shorten either source clip.
       await delay(140);
@@ -488,7 +488,7 @@
       if (task.id !== operation) return;
       incoming.style.zIndex = '2';
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      tx.animation = incoming.animate([{opacity: 0}, {opacity: 1}], {
+      tx.animation = incoming.animate([{opacity: 0}, {opacity: .999}], {
         duration: reduced ? 100 : 460, easing: 'cubic-bezier(.4,0,.25,1)', fill: 'forwards'
       });
       syncTransition();
@@ -501,14 +501,14 @@
       prefetch = null;
       video = incoming; spare = outgoing;
       spare.id = 'filmNext'; video.id = 'film';
-      video.style.opacity = '1'; video.style.zIndex = '1'; video.classList.add('visible');
+      video.style.opacity = '.999'; video.style.zIndex = '1'; video.classList.add('visible');
       spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1'; spare.muted = true;
       tx.animation.cancel(); video.style.opacity = ''; transition = null;
       current = next; loadedLook = next; phase = 'playing';
       video.muted = !prefs.sound; video.volume = prefs.volume / 100;
       $('still').src = `images/look-${LOOKS[next].id}.jpg`;
       $('still').alt = LOOKS[next].name + '穿搭推荐定格';
-      document.querySelector('.ambient').style.backgroundImage = `url("images/look-${LOOKS[next].id}.jpg")`;
+      document.querySelector('.ambient').style.backgroundImage = `url("images/ambient-${LOOKS[next].id}.jpg")`;
       if (page !== pageFor(next)) { page = pageFor(next); renderCards(false); } else updateCards();
       body.classList.remove('is-loop-transition'); body.classList.add('is-playing');
       icon($('playButton'), 'pause'); readyControls(false); renderPlaybackMode(); updateProgress(0); persist();
@@ -536,21 +536,43 @@
       try { action(); } catch (error) { cleanup(); reject(error); }
     });
   }
+  async function loadSource(deck, index, signal) {
+    const load = ext => mediaEvent('loadeddata', signal, () => {
+      deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.${ext}`; deck.load();
+    }, deck);
+    if (MEDIA_EXT === 'webm') return load('webm');
+    // A copy without the MP4 files still plays the original WebM.
+    try { await load('mp4'); } catch (error) { if (error.message !== 'media') throw error; await load('webm'); }
+  }
   async function ensureLoaded(index, signal) {
     if (!isPlayable(index)) throw new Error('unavailable');
     if (loadedLook === index && video.readyState >= 2) return;
     loadedLook = -1;
-    await mediaEvent('loadeddata', signal, () => {
-      video.src = `media/look-${LOOKS[index].id}.webm`;
-      video.load();
-    });
+    await loadSource(video, index, signal);
     loadedLook = index;
     video.dataset.look = LOOKS[index].id;
   }
   async function seek(time, signal) {
     const target = clamp(time, 0, Math.max(0, video.duration - .045));
-    if (Math.abs(video.currentTime - target) < .002 && !video.seeking) return;
+    if (Math.abs(video.currentTime - target) < .002 && !video.seeking) return false;
     await mediaEvent('seeked', signal, () => { video.currentTime = target; });
+    return true;
+  }
+  // WebKit fires seeked before the frame is on screen; wait for it (bounded) before lifting the curtain.
+  function framePresented(deck, ms = 320) {
+    if (!deck.requestVideoFrameCallback) return delay(40);
+    return new Promise(resolve => {
+      const timer = setTimeout(resolve, ms);
+      deck.requestVideoFrameCallback(() => { clearTimeout(timer); resolve(); });
+    });
+  }
+  // Decode the 4K still and its backdrop off-screen so swapping them never shows a half-drawn image.
+  function decodeStill(index) {
+    return Promise.all(['look', 'ambient'].map(kind => {
+      const image = new Image();
+      image.src = `images/${kind}-${LOOKS[index].id}.jpg`;
+      return image.decode ? image.decode().catch(() => {}) : Promise.resolve();
+    }));
   }
   async function playSafely(id) {
     if (suspended() || phase !== 'playing') return;
@@ -624,16 +646,21 @@
     $('timelineState').textContent = '准备';
     $('curtain').classList.add('closed');
     loadingTimer = setTimeout(() => { if (task.id === operation) $('loading').hidden = false; }, 900);
+    const stillReady = decodeStill(index);
     try {
       await delay(420);
       if (task.id !== operation) return;
       await ensureLoaded(index, task.signal);
-      await seek(restore ? freezeTime() : 0, task.signal);
       if (task.id !== operation) return;
+      // The curtain is still closed, so the deck can be shown early and composite its frame.
       video.classList.add('visible');
+      const painted = framePresented(video);
+      const moved = await seek(restore ? freezeTime() : 0, task.signal);
+      await Promise.all([moved ? painted : delay(40), stillReady]);
+      if (task.id !== operation) return;
       $('still').src = `images/look-${LOOKS[index].id}.jpg`;
       $('still').alt = LOOKS[index].name + '穿搭推荐定格';
-      document.querySelector('.ambient').style.backgroundImage = `url("images/look-${LOOKS[index].id}.jpg")`;
+      document.querySelector('.ambient').style.backgroundImage = `url("images/ambient-${LOOKS[index].id}.jpg")`;
       await delay(40);
       if (task.id !== operation) return;
       $('curtain').classList.remove('closed');
@@ -1024,7 +1051,7 @@
   function showRememberedStill() {
     $('still').src = `images/look-${LOOKS[current].id}.jpg`;
     $('still').alt = LOOKS[current].name + '穿搭推荐定格';
-    document.querySelector('.ambient').style.backgroundImage = `url("images/look-${LOOKS[current].id}.jpg")`;
+    document.querySelector('.ambient').style.backgroundImage = `url("images/ambient-${LOOKS[current].id}.jpg")`;
     renderCards(); updateProgress(freezeTime()); applyPrefs();
     setStatus('MOMENT, KEPT.', line(current, 'held'));
   }
