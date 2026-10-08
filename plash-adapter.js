@@ -16,7 +16,7 @@
  *
  * 调试参数（附加在地址末尾）：
  *   ?plash=1 / ?plash=0             强制开启或关闭适配
- *   ?playback=freeze|single|all     指定播放方式（默认 all）
+ *   ?playback=freeze|single|all|loop    指定播放方式（默认 all）
  *   ?interval=0|5|15|30             指定定格模式下的换装间隔
  */
 (function () {
@@ -28,7 +28,7 @@
   var DEFAULT_INTERVAL = 15;
   var DEFAULT_PLAYBACK = 'all';
   var INTERVALS = [0, 5, 15, 30];
-  var PLAYBACKS = ['freeze', 'single', 'all'];
+  var PLAYBACKS = ['freeze', 'single', 'all', 'loop'];
 
   var root = document.documentElement;
   var params = new URLSearchParams(location.search);

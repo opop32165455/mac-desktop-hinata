@@ -58,7 +58,7 @@
     autoHide: saved.autoHide !== false,
     fit: saved.fit === 'cover' ? 'cover' : 'contain',
     interval: [0, 5, 15, 30].includes(Number(saved.interval)) ? Number(saved.interval) : 0,
-    playbackMode: ['single', 'all', 'favorites'].includes(saved.playbackMode) ? saved.playbackMode : 'freeze',
+    playbackMode: ['single', 'all', 'favorites', 'loop'].includes(saved.playbackMode) ? saved.playbackMode : 'freeze',
     nativeValues: saved.nativeValues && typeof saved.nativeValues === 'object' ? saved.nativeValues : {}
   };
   if (prefs.playbackMode === 'favorites' && !prefs.favorites.length) prefs.playbackMode = 'freeze';
@@ -79,6 +79,7 @@
   let frameKind = null;
   let spinId = 0;
   let spinning = false;
+  let rewinding = false;
   let bag = [];
   let idleTimer, toastTimer, loadingTimer, replyTimer;
   let lastChange = Date.now();
@@ -273,18 +274,26 @@
   function watchFrames() {
     stopWatcher();
     if (phase !== 'playing' || suspended()) return;
-    const callback = (_, metadata) => {
-      frameHandle = null;
-      if (phase !== 'playing' || suspended()) return;
-      const t = metadata ? metadata.mediaTime : video.currentTime;
-      updateProgress(t);
-      if (!cycling() && t >= freezeTime() - .006) settle();
-      else schedule();
-    };
     const schedule = () => {
       if (typeof video.requestVideoFrameCallback === 'function') {
         frameKind = 'video'; frameHandle = video.requestVideoFrameCallback(callback);
       } else { frameKind = 'animation'; frameHandle = requestAnimationFrame(callback); }
+    };
+    const callback = (_, metadata) => {
+      frameHandle = null;
+      if (phase !== 'playing' || suspended() || rewinding) return;
+      const t = metadata ? metadata.mediaTime : video.currentTime;
+      const d = clipDuration();
+      updateProgress(Math.min(t, d));
+      if (looping()) {
+        // 合并文件 [0, d] 正放、[d, 2d] 倒放。倒放到折返点时跳回正放段，
+        // 继续正放——如此往复，每个来回只需一次 seek。
+        if (t >= 2 * d - pivotTime() - .006) video.currentTime = pivotTime();
+        schedule();
+      } else if (!cycling() && t >= freezeTime() - .006) settle();
+      // 文件是「正放 + 倒放」的合并体，片尾要靠时间判断，不能等 ended（那是 2d 处）。
+      else if (t >= d - .006) advanceLoop();
+      else schedule();
     };
     schedule();
   }
@@ -304,6 +313,26 @@
     setStatus('MOMENT, KEPT.', line(current, 'held'));
     readyControls(false);
     activity(true);
+  }
+  // 往复模式下切换前先把当前这一段倒放回开头（原片 0 秒处），再切到新的一套。
+  // 合并文件里 [d, 2d] 是倒放段，正放位置 t 对应的倒放位置是 2d − t。
+  async function rewindBeforeSwitch() {
+    if (rewinding) return;
+    const d = clipDuration();
+    const t = video.currentTime;
+    if (!(t > .05)) return;
+    rewinding = true;
+    stopWatcher();
+    $('timelineState').textContent = '倒带';
+    if (t <= d) video.currentTime = Math.max(0, Math.min(2 * d - t, 2 * d - .05));
+    await new Promise(resolve => {
+      const finish = () => { video.removeEventListener('ended', finish); clearTimeout(timer); resolve(); };
+      const timer = setTimeout(finish, 20000);
+      video.addEventListener('ended', finish, { once: true });
+      const played = video.play();
+      if (played && played.catch) played.catch(finish);
+    });
+    rewinding = false;
   }
   function cancelSpin() {
     ++spinId;
@@ -329,6 +358,19 @@
   // Only two media decks: one playing, one paused on the next opening frame.
   // A transition starts at the real ended event, never at a recommended freeze.
   function cycling() { return prefs.playbackMode !== 'freeze'; }
+  function looping() { return prefs.playbackMode === 'loop'; }
+  // 往复循环依赖合并文件：[0, d] 为正放、[d, 2d] 为整段倒放（d = 单次入场片长）。
+  const DEFAULT_PIVOT = 7;
+  function clipDuration() {
+    const half = Number(video.duration) / 2;
+    return Number.isFinite(half) && half > 1 ? half : LOOKS[current].duration;
+  }
+  // 折返点：默认 7 秒，可在 catalog.js 的 look 上写 "pivot" 单独调整。
+  function pivotTime() {
+    const look = LOOKS[current];
+    const pivot = Number(look.pivot);
+    return Number.isFinite(pivot) && pivot > 0 && pivot < look.duration ? pivot : DEFAULT_PIVOT;
+  }
   function favoriteOrder() { return DISPLAY_ORDER.filter(i => isPlayable(i) && prefs.favorites.includes(i)); }
   function nextLoopIndex() {
     if (prefs.playbackMode === 'single') return current;
@@ -338,7 +380,7 @@
     return order.find(i => DISPLAY_ORDER.indexOf(i) > position) ?? order[0];
   }
   function renderPlaybackMode() {
-    const labels = {freeze: '定格模式', single: '单套循环', all: '全部轮播', favorites: '收藏轮播'};
+    const labels = {freeze: '定格模式', single: '单套循环', all: '全部轮播', favorites: '收藏轮播', loop: '往复循环'};
     body.dataset.playbackMode = prefs.playbackMode;
     $('modeButton').setAttribute('aria-label', '播放方式：' + labels[prefs.playbackMode]);
     $('modeButton').title = labels[prefs.playbackMode] + ' · 切换播放方式';
@@ -349,6 +391,8 @@
       option.setAttribute('aria-checked', String(option.dataset.playback === prefs.playbackMode));
       option.setAttribute('aria-disabled', String(option.dataset.playback === 'favorites' && !prefs.favorites.length));
     });
+    const loopToggle = $('loopToggle');
+    if (loopToggle) loopToggle.checked = looping();
     $('autoOptions').classList.toggle('is-dormant', cycling());
     $('autoOptions').querySelectorAll('button').forEach(button => { button.disabled = cycling(); });
     $('autoLoopNote').hidden = !cycling();
@@ -380,7 +424,7 @@
     syncTransition(); activity(true);
   }
   function setPlaybackMode(mode, speak = true) {
-    if (!['freeze', 'single', 'all', 'favorites'].includes(mode) || phase === 'editing') return;
+    if (!['freeze', 'single', 'all', 'favorites', 'loop'].includes(mode) || phase === 'editing') return;
     if (mode === 'favorites' && !favoriteOrder().length) return;
     closeModeMenu();
     if (mode === prefs.playbackMode) return;
@@ -396,7 +440,7 @@
       else primeLoop();
     }
     if (speak) {
-      const words = {freeze: '好，就把喜欢的这一刻留下。', single: '这么喜欢这一套呀……那就再陪你看一会儿。', all: '那就慢慢看，我一套一套换给你。', favorites: '你点过心的，我都记得。慢慢穿给你看。'};
+      const words = {freeze: '好，就把喜欢的这一刻留下。', single: '这么喜欢这一套呀……那就再陪你看一会儿。', all: '那就慢慢看，我一套一套换给你。', favorites: '你点过心的，我都记得。慢慢穿给你看。', loop: '那就来回走给你看，进进退退，都留在你眼前。'};
       toast(words[mode]);
       if (mode !== 'freeze') setStatus('STAY A LITTLE.', words[mode]);
       unlockAudio(); chime(660, .12);
@@ -428,7 +472,7 @@
     return item.promise;
   }
   function primeLoop() {
-    if (!cycling() || !['playing', 'paused'].includes(phase)) return;
+    if (!cycling() || looping() || !['playing', 'paused'].includes(phase)) return;
     const next = nextLoopIndex();
     if (next !== null) prepareNext(next);
   }
@@ -628,6 +672,8 @@
     if (!preserveRandom && (index !== current || (!restore && entry === 'enter'))) dialogue.cancelPending();
     cancelSpin();
     if (panel) closePanel(false);
+    // 往复模式下切换前先把当前这一段倒放回开头，再切到新的一套。
+    if (looping() && index !== current && phase === 'playing') await rewindBeforeSwitch();
     const task = startOperation();
     releaseSpare();
     current = index;
@@ -915,7 +961,7 @@
     showRememberedStill();
     $('timelineState').textContent = '定格'; icon($('playButton'), 'repeat');
     $('playButton').title = '再看一次入场'; $('playButton').setAttribute('aria-label', '再看一次入场');
-    readyControls(false);
+    readyControls(false); renderPlaybackMode();
     toast('已回到初始状态。', '设置已恢复');
   });
 
@@ -984,6 +1030,8 @@
   $('brightness').addEventListener('input', event => { prefs.brightness = Number(event.target.value); applyPrefs(); persist(); });
   $('volume').addEventListener('input', event => { prefs.volume = Number(event.target.value); applyPrefs(); persist(); });
   $('idleToggle').addEventListener('change', event => { prefs.autoHide = event.target.checked; applyPrefs(); persist(); });
+  // 设置面板里的「循环 / 定格」开关：循环即往复播放，定格即停在自选的一帧。
+  $('loopToggle').addEventListener('change', event => { setPlaybackMode(event.target.checked ? 'loop' : 'freeze'); });
   // HTML buttons keep settings inside the web renderer across wallpaper hosts.
   $('fitOptions').addEventListener('click', event => {
     const button = event.target.closest('[data-fit]');
@@ -1027,7 +1075,8 @@
       return nativePlay();
     };
     deck.addEventListener('play', () => { if (deck !== video || phase !== 'playing' || suspended()) deck.pause(); });
-    deck.addEventListener('ended', () => { if (deck === video && phase === 'playing') cycling() ? advanceLoop() : settle(); });
+    // 往复模式的「片尾」由 watchFrames 按片长判定，倒带过程中也要让路。
+    deck.addEventListener('ended', () => { if (deck === video && phase === 'playing' && !looping() && !rewinding) cycling() ? advanceLoop() : settle(); });
     deck.addEventListener('timeupdate', () => { if (deck === video && phase === 'playing' && !cycling() && video.currentTime >= freezeTime()) settle(); });
     deck.addEventListener('waiting', () => { if (deck === video && phase === 'playing' && !suspended()) { clearTimeout(loadingTimer); loadingTimer = setTimeout(() => { if (phase === 'playing' && video.readyState < 3) $('loading').hidden = false; }, 900); } });
     deck.addEventListener('playing', () => { if (deck === video) { clearTimeout(loadingTimer); $('loading').hidden = true; } });
@@ -1042,7 +1091,9 @@
   setInterval(() => {
     if (suspended()) return;
     updateClock();
-    if (!cycling() && prefs.interval && !panel && !modeOpen && !spinning && phase === 'held' && Date.now() - lastChange >= prefs.interval * 60000) randomLook();
+    // 往复模式没有「定格」态，改用 playing 作为可切换条件；触发后会先倒带再换装。
+    const switchReady = looping() ? (phase === 'playing' && !rewinding) : (!cycling() && phase === 'held');
+    if (switchReady && prefs.interval && !panel && !modeOpen && !spinning && Date.now() - lastChange >= prefs.interval * 60000) randomLook();
   }, 15000);
   function showRememberedStill() {
     $('still').src = `images/look-${LOOKS[current].id}.jpg`;
