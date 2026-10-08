@@ -8,6 +8,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "A SECRET IN RED",
     "freeze": 10.5,
     "duration": 12.033333,
+    "pivot": 7.583333,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -46,6 +47,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "A DAY TO LINGER",
     "freeze": 11.41,
     "duration": 12.033333,
+    "pivot": 6.666667,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -84,6 +86,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "A LITTLE MISCHIEF",
     "freeze": 11.2,
     "duration": 12.028005,
+    "pivot": 7.4,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -122,6 +125,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "TIED WITH CARE",
     "freeze": 10.5,
     "duration": 12.033333,
+    "pivot": 7.6,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -160,6 +164,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "OFF THE CLOCK",
     "freeze": 10.56,
     "duration": 12.033333,
+    "pivot": 7.333333,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -198,6 +203,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "WORTH DRESSING FOR",
     "freeze": 11.7,
     "duration": 12.033333,
+    "pivot": 8.216667,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -236,6 +242,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "A QUIET GLEAM",
     "freeze": 11.41,
     "duration": 12.028005,
+    "pivot": 7.9,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -274,6 +281,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "STAY A LITTLE LONGER",
     "freeze": 10.53,
     "duration": 12.028005,
+    "pivot": 7.566667,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -312,6 +320,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "NO OCCASION NEEDED",
     "freeze": 11.23,
     "duration": 12.033333,
+    "pivot": 7.116667,
     "fps": 60,
     "locked": false,
     "dialogue": {
