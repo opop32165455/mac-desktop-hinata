@@ -19,4 +19,6 @@ if [ -z "$PY" ] || [ ! -x "$PY" ]; then
 fi
 
 # 仅监听回环地址，不对外网暴露；exec 让 launchd 直接管理该进程。
-exec "$PY" -m http.server "$PORT" --bind 127.0.0.1 --directory "$ROOT"
+# 不用 `python3 -m http.server`：它不支持 Range，WebKit 播放 MP4 时每次 seek
+# 都要从头重新下载整个文件，会造成卡顿与播放中途停住。
+exec "$PY" "$ROOT/tools/plash-server.py" "$PORT" "$ROOT"

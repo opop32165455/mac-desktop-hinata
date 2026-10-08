@@ -85,6 +85,15 @@
   let rewinding = false;
   let rewindTask = null;
   let pivotTimer;
+  // 备用牌组正在「预滚」：提前起播，与倒放中的主牌组在折返点会合。
+  let prerolling = false;
+  // 未经拦截的原生 play()，只给预滚用（宿主恢复播放时不能启动备用牌组）。
+  const nativePlay = new Map();
+  // WebKit 只允许「被用户手势播放过」的 <video> 带声起播，且按元素计算。
+  // soundBlocked：带声起播被拒、暂时静音保画面；下一次用户手势时恢复声音。
+  let soundBlocked = false;
+  let hostMuteNoticed = false;
+  const unlockedDecks = new WeakSet();
   let bag = [];
   let idleTimer, toastTimer, loadingTimer, replyTimer;
   let lastChange = Date.now();
@@ -225,8 +234,7 @@
     document.querySelectorAll('[data-fit]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.fit === prefs.fit)));
     document.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === prefs.interval)));
     document.querySelectorAll('[data-switch-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.switchMode === prefs.switchMode)));
-    video.muted = !prefs.sound;
-    video.volume = prefs.volume / 100;
+    applySound();
     spare.muted = true;
     renderPlaybackMode();
     icon($('soundButton'), prefs.sound ? 'volume' : 'mute');
@@ -247,6 +255,33 @@
           if (document.activeElement instanceof HTMLElement && document.activeElement.closest('.interface')) document.activeElement.blur();
         }
       }, 15000);
+    }
+  }
+  // 声音以 prefs.sound 为准，每次换牌、换装都重新套用，不让某次临时静音残留下去。
+  // retry：换装 / 自动轮换时总是先试带声播放，真被拒绝了 playSafely 会立刻退回静音，
+  // 观感上没有代价；往复折返不 retry —— 被拒会让新牌组停一下，每个来回都卡一次。
+  function applySound(retry = false) {
+    if (retry) soundBlocked = false;
+    video.muted = !prefs.sound || soundBlocked;
+    video.volume = prefs.volume / 100;
+  }
+  // 在用户手势里对两个牌组各 play() 一次，WebKit 便会解除该元素的带声播放限制。
+  // 暂停中的牌组立即 pause() 并恢复原静音状态，不会出声、也不会挪动画面。
+  function unlockDecks() {
+    for (const deck of decks) {
+      // 没有 src 的备用牌组也要解锁：WebKit 在 play() 检查资源之前就已解除限制，之后换源仍然有效。
+      if (unlockedDecks.has(deck) || deck.ended) continue;
+      unlockedDecks.add(deck);
+      if (!deck.paused) { nativePlay.get(deck)().catch(() => {}); continue; }
+      const muted = deck.muted;
+      deck.muted = false;
+      nativePlay.get(deck)().catch(() => {});
+      deck.pause(); deck.muted = muted;
+    }
+    if (soundBlocked) {
+      soundBlocked = false;
+      applySound();
+      if (phase === 'playing' && !suspended() && video.paused) playSafely(operation);
     }
   }
   function unlockAudio() {
@@ -295,11 +330,21 @@
       updateProgress(Math.min(t, d));
       if (looping()) {
         // 合并文件 [0, d] 正放、[d, 2d] 倒放。倒放到折返点时回到正放段继续正放。
-        // 备用牌组若已定位好折返点就直接硬切过去（切点两侧是同一帧，因此无缝），
-        // 那次向后 seek 便发生在看不见的牌组上；牌组未就绪时退回普通 seek。
-        if (t >= 2 * d - pivotTime() - .006) {
-          if (pivotReady()) swapLoopDecks();
-          else { video.currentTime = pivotTime(); schedule(); }
+        // 备用牌组停在折返点前 PREROLL 秒；主牌组倒放到折返点前 PREROLL 秒时让它起播，
+        // 两者从两侧同时走向折返点，到点时备用牌组已在运动，硬切过去没有起播停顿。
+        // 牌组未就绪时退回普通 seek。
+        const turn = 2 * d - pivotTime();
+        if (!prerolling && t >= turn - PREROLL - .006 && t < turn && pivotReady()) startPreroll();
+        if (t >= turn - .006) {
+          if (prerolling && spare.currentTime > parkTime() + .02) swapLoopDecks();
+          // 备用牌组起播稍慢时，让主牌组多倒放一点点等它，不定住画面。
+          else if (prerolling && t < turn + .25) schedule();
+          else {
+            stopPreroll();
+            // seek 尚未完成时回调里的时间可能仍是旧值，不能重复 seek，否则会卡死在折返点。
+            if (!video.seeking) { video.currentTime = pivotTime(); schedulePivot(1500); }
+            schedule();
+          }
         } else schedule();
       } else if (!cycling() && t >= freezeTime() - .006) settle();
       // 文件是「正放 + 倒放」的合并体，片尾要靠时间判断，不能等 ended（那是 2d 处）。
@@ -336,8 +381,10 @@
     if (!(t > .05)) return Promise.resolve();
     rewinding = true;
     stopWatcher();
+    stopPreroll();
     $('timelineState').textContent = '倒带';
-    if (t <= d) video.currentTime = Math.max(0, Math.min(2 * d - t, 2 * d - .05));
+    // 片尾自动换装时 t 已在正放/倒放的接缝处，合并文件会自然续进倒放段，不必 seek（seek 会卡一下）。
+    if (t <= d && d - t > .05) video.currentTime = Math.max(0, Math.min(2 * d - t, 2 * d - .05));
     rewindTask = new Promise(resolve => {
       const finish = () => { video.removeEventListener('ended', finish); clearTimeout(timer); resolve(); };
       const timer = setTimeout(finish, 20000);
@@ -358,14 +405,30 @@
   /* 往复的折返点需要一次向后 seek，而 WebKit 的 seek 会清空解码管线并重新缓冲，
    * 产生一次可见顿挫。实测折返点距最近关键帧只差 0.33 秒（20 帧），
    * 所以瓶颈不是解码量，改关键帧间隔也无济于事 —— 只能让这次 seek 不被看见。
-   * 做法：备用牌组提前定位到折返点，到点时硬切过去。切点两侧是同一帧，因此无缝。 */
+   * 做法：备用牌组提前定位到折返点，到点时硬切过去。切点两侧是同一帧，因此无缝。
+   * 但暂停的牌组 play() 后要过几帧才真正走起来（WebKit 需要重新 preroll），
+   * 硬切到暂停牌组仍会定住几帧 —— 所以让它提前 PREROLL 秒起播，见 watchFrames。 */
+  const PREROLL = .3;
+  function parkTime() { return Math.max(0, pivotTime() - PREROLL); }
   function pivotReady() {
     return Boolean(prefetch) && prefetch.element === spare && prefetch.index === current &&
-      spare.readyState >= 2 && !spare.seeking && Math.abs(spare.currentTime - pivotTime()) < .05;
+      spare.readyState >= 2 && !spare.seeking && (prerolling || Math.abs(spare.currentTime - parkTime()) < .05);
+  }
+  function startPreroll() {
+    prerolling = true;
+    spare.muted = true;
+    nativePlay.get(spare)().catch(() => { if (prerolling) stopPreroll(); });
+  }
+  // 预滚中断后，备用牌组已离开停靠点，必须作废并重新准备。
+  function stopPreroll() {
+    if (!prerolling) return;
+    prerolling = false;
+    spare.pause();
+    prefetch?.controller.abort(); prefetch = null;
   }
   function preparePivot() {
     if (!looping() || prefetch || phase === 'loading' || phase === 'transition') return;
-    const pivot = pivotTime();
+    const pivot = parkTime();
     const item = {index: current, element: spare, controller: new AbortController(), promise: null};
     prefetch = item;
     const deck = spare, signal = item.controller.signal;
@@ -391,25 +454,43 @@
     }, delayMs);
   }
   function swapLoopDecks() {
-    const outgoing = video;
-    video = spare; spare = outgoing;
+    const outgoing = video, incoming = spare;
+    video = incoming; spare = outgoing;
     // 旧的预取对象已随牌组对调失效，必须清掉，否则 preparePivot 会被守卫挡住不再准备。
-    prefetch = null;
+    prefetch = null; prerolling = false;
     // 先停掉看不见的旧牌组，免得它继续抢占解码。
     outgoing.pause(); outgoing.muted = true;
     video.id = 'film'; spare.id = 'filmNext';
-    video.muted = !prefs.sound; video.volume = prefs.volume / 100;
+    // 旧牌组换成 #filmNext 后 CSS 会把它变成透明；淡入期间必须用行内样式托住，
+    // 否则新牌组从 0 淡入的 140ms 里会透出背景，看起来就是一次闪顿。
+    outgoing.style.opacity = '.999'; outgoing.style.zIndex = '1';
     // 极短交叉淡入：切点两侧是同一帧，所以看不出混合，但能盖住合成层切换的空隙。
+    // 终点用 .999 而不是 1，与 #film.visible 一致（避免 macOS 叠加层泛白）。
     video.style.zIndex = '2'; video.classList.add('visible');
-    const fade = video.animate([{opacity: 0}, {opacity: 1}], {duration: 140, easing: 'linear', fill: 'forwards'});
-    video.play().catch(() => {});
+    const fade = video.animate([{opacity: 0}, {opacity: .999}], {duration: 140, easing: 'linear', fill: 'forwards'});
+    startLoopDeck(video);
     watchFrames();
     fade.finished.then(() => {
+      if (video !== incoming) return;
+      video.style.opacity = ''; video.style.zIndex = '1';
       fade.cancel();
-      video.style.opacity = '1'; video.style.zIndex = '1';
       spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1';
     }).catch(() => {});
     schedulePivot(1500);
+  }
+  // 新牌组从没被用户手势播放过：开着声音时 WebKit 可能拒绝它带声起播（或取消静音时直接暂停它），
+  // 以前这个拒绝被吞掉，画面就永远停在折返点。被拒时退回静音继续播，画面优先。
+  function startLoopDeck(deck) {
+    const id = operation;
+    const muteAndPlay = () => {
+      if (deck !== video || id !== operation || phase !== 'playing' || suspended() || deck.muted) return;
+      soundBlocked = true; applySound();
+      deck.play().catch(() => {});
+    };
+    applySound();
+    deck.play().catch(error => { if (error?.name === 'NotAllowedError') muteAndPlay(); });
+    // 预滚中的牌组 play() 会立即成功，但随后取消静音仍可能被 WebKit 暂停，稍后再核对一次。
+    setTimeout(() => { if (deck.paused) muteAndPlay(); }, 120);
   }
   function cancelSpin() {
     ++spinId;
@@ -427,6 +508,7 @@
     controller = new AbortController();
     ++operation;
     stopWatcher();
+    stopPreroll();
     video.pause();
     clearTimeout(loadingTimer);
     return { id: operation, signal: controller.signal };
@@ -524,7 +606,7 @@
     }
   }
   function releaseSpare() {
-    prefetch?.controller.abort(); prefetch = null;
+    prefetch?.controller.abort(); prefetch = null; prerolling = false;
     spare.pause(); spare.muted = true;
     spare.style.opacity = '0'; spare.style.zIndex = '1';
     spare.removeAttribute('src'); spare.removeAttribute('data-look'); spare.load();
@@ -627,7 +709,7 @@
       spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1'; spare.muted = true;
       tx.animation.cancel(); video.style.opacity = ''; transition = null;
       current = next; loadedLook = next; phase = 'playing';
-      video.muted = !prefs.sound; video.volume = prefs.volume / 100;
+      applySound(true);
       $('still').src = `images/look-${LOOKS[next].id}.jpg`;
       $('still').alt = LOOKS[next].name + '穿搭推荐定格';
       document.querySelector('.ambient').style.backgroundImage = `url("images/ambient-${LOOKS[next].id}.jpg")`;
@@ -714,6 +796,8 @@
       primeLoop();
     } catch (error) {
       if (id !== operation || phase !== 'playing' || suspended()) return;
+      // 带声起播被拒（没有用户手势）：先静音继续播，下一次点击时恢复声音。
+      if (error.name === 'NotAllowedError' && !video.muted) { soundBlocked = true; applySound(); return playSafely(id); }
       phase = 'paused';
       body.classList.remove('is-playing');
       $('timelineState').textContent = '待播放';
@@ -806,8 +890,16 @@
       $('timelineState').textContent = '入场';
       pendingEntry = {id: task.id, index, event: quiet ? 'quiet' : entry, allowAffection};
       updateProgress(0);
+      applySound(true);
       await playSafely(task.id);
     } catch (error) { loadFailure(index, error, task.id); }
+  }
+  // 往复模式没有「下一套」：播到文件末尾（折返判定被错过）时回到折返点继续，
+  // 不能交给 advanceLoop —— 它会因为 nextLoopIndex() 为空把模式改回定格。
+  function resumeCycle() {
+    if (looping() && video.ended) { video.currentTime = pivotTime(); playSafely(operation); }
+    else if (cycling() && video.ended) advanceLoop();
+    else playSafely(operation);
   }
   function togglePlayback() {
     if (phase === 'transition' && transition) {
@@ -818,14 +910,14 @@
     if (phase === 'loading' || phase === 'editing') return;
     unlockAudio();
     if (phase === 'playing') {
-      phase = 'paused'; video.pause(); stopWatcher(); body.classList.remove('is-playing');
+      phase = 'paused'; video.pause(); stopWatcher(); stopPreroll(); body.classList.remove('is-playing');
       icon($('playButton'), 'play'); $('playButton').setAttribute('aria-label', '继续播放入场');
       $('timelineState').textContent = '暂停'; setStatus('TAKE YOUR TIME.', line(current, 'pause'));
     } else if (phase === 'paused') {
       phase = 'playing'; body.classList.add('is-playing');
       icon($('playButton'), 'pause'); $('playButton').setAttribute('aria-label', '暂停入场');
       $('timelineState').textContent = '入场'; setStatus('HERE, WITH YOU.', line(current, 'resume'));
-      if (cycling() && video.ended) advanceLoop(); else playSafely(operation);
+      resumeCycle();
     } else selectLook(current, { entry: 'replay' });
     activity(true);
   }
@@ -954,8 +1046,8 @@
   }
   function onSuspend() {
     body.classList.toggle('is-system-paused', suspended());
-    if (suspended()) { decks.forEach(deck => deck.pause()); stopWatcher(); clearTimeout(idleTimer); audioContext?.suspend().catch(() => {}); }
-    else { lastChange = Date.now(); if (phase === 'playing') { if (cycling() && video.ended) advanceLoop(); else playSafely(operation); } activity(true); }
+    if (suspended()) { stopPreroll(); decks.forEach(deck => deck.pause()); stopWatcher(); clearTimeout(idleTimer); audioContext?.suspend().catch(() => {}); }
+    else { lastChange = Date.now(); if (phase === 'playing') resumeCycle(); activity(true); }
     syncTransition();
   }
 
@@ -1148,7 +1240,10 @@
   $('wakeButton').addEventListener('click', wake);
   $('brand').addEventListener('click', event => { event.preventDefault(); wake(); });
   document.addEventListener('pointermove', () => activity());
-  document.addEventListener('pointerdown', () => { unlockAudio(); activity(true); });
+  document.addEventListener('pointerdown', () => { unlockDecks(); unlockAudio(); activity(true); });
+  // click / keydown 在 WebKit 里一定算用户手势，作为 pointerdown 的兜底。
+  document.addEventListener('click', unlockDecks, true);
+  document.addEventListener('keydown', unlockDecks, true);
   document.addEventListener('focusin', () => activity(true));
   document.addEventListener('visibilitychange', () => { documentPaused = document.hidden; onSuspend(); });
   document.addEventListener('keydown', event => {
@@ -1163,14 +1258,28 @@
   });
   for (const deck of decks) {
     // Host media-resume calls must never start the prepared, invisible deck.
-    const nativePlay = deck.play.bind(deck);
+    const play = deck.play.bind(deck);
+    nativePlay.set(deck, play);
     deck.play = function () {
       if (deck !== video || phase !== 'playing' || suspended()) return Promise.resolve();
-      return nativePlay();
+      return play();
     };
-    deck.addEventListener('play', () => { if (deck !== video || phase !== 'playing' || suspended()) deck.pause(); });
-    // 往复模式的「片尾」由 watchFrames 按片长判定，倒带过程中也要让路。
-    deck.addEventListener('ended', () => { if (deck === video && phase === 'playing' && !looping() && !rewinding) cycling() ? advanceLoop() : settle(); });
+    deck.addEventListener('play', () => {
+      if (deck === spare && prerolling && phase === 'playing' && !suspended()) return;
+      if (deck !== video || phase !== 'playing' || suspended()) deck.pause();
+    });
+    // 往复模式的「片尾」由 watchFrames 按片长判定；万一错过折返点播到了文件末尾，回折返点继续。
+    deck.addEventListener('ended', () => {
+      if (deck !== video || phase !== 'playing' || rewinding) return;
+      if (looping()) resumeCycle(); else cycling() ? advanceLoop() : settle();
+    });
+    // 宿主（如 Plash 的「静音」选项）会注入脚本强制把所有 <video> 设为静音。
+    // 不跟它抢（它在每次 DOM 变化时都会再静音一次），只提示一次去哪里关掉。
+    deck.addEventListener('volumechange', () => {
+      if (deck !== video || hostMuteNoticed || !deck.muted || !prefs.sound || soundBlocked) return;
+      hostMuteNoticed = true;
+      toast('声音被壁纸程序静音了。请在 Plash 设置里关闭静音选项。', '提示');
+    });
     deck.addEventListener('timeupdate', () => { if (deck === video && phase === 'playing' && !cycling() && video.currentTime >= freezeTime()) settle(); });
     deck.addEventListener('waiting', () => { if (deck === video && phase === 'playing' && !suspended()) { clearTimeout(loadingTimer); loadingTimer = setTimeout(() => { if (phase === 'playing' && video.readyState < 3) $('loading').hidden = false; }, 900); } });
     deck.addEventListener('playing', () => { if (deck === video) { clearTimeout(loadingTimer); $('loading').hidden = true; } });
