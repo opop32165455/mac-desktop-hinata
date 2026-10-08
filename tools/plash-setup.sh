@@ -9,13 +9,15 @@
 # 兼容别名：install = start，uninstall = stop
 #
 # 安装两个 launchd 用户代理（只用 macOS 自带的程序，不需要安装任何东西）：
-#   com.frac-lab.purple-plash-server   本地服务：系统自带的 Apache（/usr/sbin/httpd），127.0.0.1:47070
-#   com.frac-lab.purple-desktop-state  桌面遮挡判断：系统自带的 osascript 运行 tools/desktop-state.js
+#   com.purple-moment-mac.server         本地服务：系统自带的 Apache（/usr/sbin/httpd），127.0.0.1:47070
+#   com.purple-moment-mac.desktop-state  桌面遮挡判断：系统自带的 osascript 运行 tools/desktop-state.js
 # 配置文件在 ~/Library/LaunchAgents/，登录后自动运行，崩溃自动重启。
 set -u
 
-LABEL="com.frac-lab.purple-plash-server"
-STATE_LABEL="com.frac-lab.purple-desktop-state"
+LABEL="com.purple-moment-mac.server"
+STATE_LABEL="com.purple-moment-mac.desktop-state"
+# 旧版用过的标签（易被误解为原作者发布），安装 / 卸载时一并清理。
+LEGACY_LABELS="com.frac-lab.purple-plash-server com.frac-lab.purple-desktop-state"
 PORT="${PLASH_PORT:-47070}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$PROJECT_DIR/tools/plash-server.sh"
@@ -27,6 +29,14 @@ STATE_PLIST="$HOME/Library/LaunchAgents/$STATE_LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 die() { printf '%s\n' "$1" >&2; exit 1; }
+
+remove_legacy() {
+  local label
+  for label in $LEGACY_LABELS; do
+    launchctl bootout "$DOMAIN/$label" >/dev/null 2>&1
+    rm -f "$HOME/Library/LaunchAgents/$label.plist"
+  done
+}
 
 wait_ready() {
   local i
@@ -93,6 +103,7 @@ PLIST_EOF
 }
 
 install_agent() {
+  remove_legacy
   [ -x /usr/sbin/httpd ] || die "找不到系统自带的 Apache：/usr/sbin/httpd"
   [ -f "$SERVER" ] || die "找不到服务脚本：$SERVER"
   mkdir -p "$HOME/Library/LaunchAgents"
@@ -147,6 +158,7 @@ PLIST_EOF
 }
 
 uninstall_agent() {
+  remove_legacy
   launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1
   launchctl bootout "$DOMAIN/$STATE_LABEL" >/dev/null 2>&1
   # 桌面状态文件停止更新后页面会自动忽略；这里一并清掉，避免残留。
