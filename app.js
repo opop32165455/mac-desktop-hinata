@@ -29,6 +29,8 @@
   // hardware-decode it. CEF (Wallpaper Engine) and Firefox usually cannot; rebuild
   // with `CODEC=h264 tools/build-loop-media.sh` for those hosts.
   const MEDIA_EXT = 'mp4';
+  // 视频重新生成后改这个版本号，Plash 才不会继续播缓存里的旧文件。
+  const MEDIA_VERSION = '20261008e';
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) {}
   const FREEZE_REVISION = 1;
@@ -862,7 +864,7 @@
   }
   async function loadSource(deck, index, signal) {
     await mediaEvent('loadeddata', signal, () => {
-      deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.${MEDIA_EXT}`; deck.load();
+      deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.${MEDIA_EXT}?v=${MEDIA_VERSION}`; deck.load();
     }, deck);
   }
   async function ensureLoaded(index, signal) {
