@@ -442,12 +442,12 @@
   }
   // 预滚直接按最终的声音状态起播，换牌时不再改 muted：WebKit 对「没有用户手势时取消静音」
   // 会直接暂停元素，旧做法因此被迫退回静音，壁纸收不到点击，声音就一直不回来。
-  // 主牌组此时在倒放段（本来无声），备用牌组提前 0.3 秒出声无妨。
+  // 预滚期间音量为 0（不是静音），换牌时与主牌组交叉淡变音量 —— 改音量不需要用户手势。
   // 之前被拒过也每一轮在这里重试带声；仍被拒就静音继续预滚，画面不受影响。
   function startPreroll() {
     prerolling = true; turnError = null;
     const deck = spare;
-    deck.volume = prefs.volume / 100;
+    deck.volume = 0;
     deck.muted = !prefs.sound;
     nativePlay.get(deck)().catch(error => {
       if (!prerolling || deck !== spare) return;
@@ -498,9 +498,13 @@
     video = incoming; spare = outgoing;
     // 旧的预取对象已随牌组对调失效，必须清掉，否则 preparePivot 会被守卫挡住不再准备。
     prefetch = null; prerolling = false;
-    // 先停掉看不见的旧牌组，免得它继续抢占解码。
-    outgoing.pause(); outgoing.muted = true;
     video.id = 'film'; spare.id = 'filmNext';
+    // 倒放段也有（倒放的）声音：两个牌组在折返点播的是同一瞬间的声音，80ms 交叉淡变，
+    // 不会出现爆音或断音。淡出后再停掉看不见的旧牌组，免得它继续抢占解码。
+    const level = prefs.volume / 100;
+    const retire = () => { if (outgoing === spare) { outgoing.pause(); outgoing.muted = true; } };
+    if (incoming.muted || outgoing.muted) { incoming.volume = level; retire(); }
+    else { fadeVolume(incoming, 0, level, 80); fadeVolume(outgoing, outgoing.volume, 0, 80, retire); }
     // 两个牌组都已在合成、都是 .999（避免 macOS 叠加层泛白），换牌只对调层级，
     // 同一次绘制里生效；旧牌组留在下面，下一轮直接在原地 seek 到停靠点。
     video.style.opacity = '.999'; video.style.zIndex = '1'; video.classList.add('visible');
@@ -511,10 +515,18 @@
   }
   // 新牌组从没被用户手势播放过：开着声音时 WebKit 可能拒绝它带声起播（或取消静音时直接暂停它），
   // 以前这个拒绝被吞掉，画面就永远停在折返点。被拒时退回静音继续播，画面优先。
-  // 换上来的牌组已在预滚中以最终声音状态播放，这里不改 muted，只同步音量与状态。
+  function fadeVolume(deck, from, to, ms, done) {
+    const start = performance.now();
+    const step = () => {
+      const k = Math.min(1, (performance.now() - start) / ms);
+      try { deck.volume = clamp(from + (to - from) * k, 0, 1); } catch (_) {}
+      if (k < 1) setTimeout(step, 8); else done?.();
+    };
+    step();
+  }
+  // 换上来的牌组已在预滚中以最终声音状态播放，这里不改 muted（音量由换牌时的淡变负责）。
   function startLoopDeck(deck) {
     const id = operation;
-    deck.volume = prefs.volume / 100;
     if (!prefs.sound) deck.muted = true;
     soundBlocked = prefs.sound && deck.muted;
     deck.play().catch(() => {});

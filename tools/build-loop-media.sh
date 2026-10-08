@@ -17,7 +17,7 @@
 #     通常不能解 HEVC，需要时可用 CODEC=h264 生成 H.264 版本。
 #  4. 每 30 帧（0.5 秒）一个闭合 GOP，关键帧落在整半秒上：默认折返点 7 秒
 #     正好是关键帧，文件内 seek（倒带、折返）只需解码很少的帧。
-#  5. 音轨比视频短一点点，保证 duration 由视频决定（AAC 补齐不会把时长拉长）。
+#  5. 倒放段配倒放音轨，与画面逐帧对应；音轨比视频短一帧，保证 duration 由视频决定。
 #
 # 母版位置默认是项目旁边的 desktop-website-webm-masters/，可用 MASTERS=… 覆盖。
 #
@@ -79,15 +79,14 @@ build_one() {
   ls "${WORK}/rev"/*.mkv | sort -r | sed "s/^/file '/; s/$/'/" > "${WORK}/rev/list.txt"
 
   echo "=== look-${id}：单次编码（${CODEC}, CRF ${CRF}）==="
-  # 每帧 800 个采样（48000 / 60）。正放音轨补齐到 N 帧；倒放段为静音，
-  # 比视频短 0.1 秒，让文件时长严格等于 2N 帧。
-  local fwd_samples=$((n * 800)) rev_samples=$((n * 800 - 4800))
+  # 每帧 800 个采样（48000 / 60）。正放音轨补齐到 N 帧；倒放段是原始音轨前 N-1 帧整段倒放，
+  # 与倒放画面逐帧对应（音轨比视频少一帧，duration 由视频决定）。镜像接缝处波形连续，不会爆音。
+  local fwd_samples=$((n * 800)) rev_samples=$(((n - 1) * 800))
   # shellcheck disable=SC2086
   "${FF}" -y -hide_banner -loglevel error \
     -i "${src}" \
     -f concat -safe 0 -i "${WORK}/rev/list.txt" \
-    -f lavfi -i anullsrc=r=48000:cl=stereo \
-    -filter_complex "[0:v]${PREP}[vf];[1:v]setpts=N/60/TB,tpad=stop=1:stop_mode=clone,format=yuv420p[vr];[vf][vr]concat=n=2:v=1:a=0[vout];[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=end_sample=${fwd_samples}[af];[2:a]atrim=end_sample=${rev_samples},aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[ar];[af][ar]concat=n=2:v=0:a=1[aout]" \
+    -filter_complex "[0:v]${PREP}[vf];[1:v]setpts=N/60/TB,tpad=stop=1:stop_mode=clone,format=yuv420p[vr];[vf][vr]concat=n=2:v=1:a=0[vout];[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=end_sample=${fwd_samples},asplit[af][ar0];[ar0]atrim=end_sample=${rev_samples},areverse[ar];[af][ar]concat=n=2:v=0:a=1[aout]" \
     -map "[vout]" -map "[aout]" \
     ${VIDEO_ARGS} ${COLOR_ARGS} ${AUDIO_ARGS} -movflags +faststart -f mp4 "${out}"
 
