@@ -8,7 +8,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "A SECRET IN RED",
     "freeze": 10.5,
     "duration": 12.033333,
-    "pivot": 10.533333,
+    "pivot": 10.783333,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -125,7 +125,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "TIED WITH CARE",
     "freeze": 10.5,
     "duration": 12.033333,
-    "pivot": 10.366667,
+    "pivot": 10.65,
     "fps": 60,
     "locked": false,
     "dialogue": {
@@ -242,7 +242,7 @@ window.PURPLE_LOOKS = Object.freeze([
     "english": "A QUIET GLEAM",
     "freeze": 11.41,
     "duration": 12.028005,
-    "pivot": 11.083333,
+    "pivot": 11.183333,
     "fps": 60,
     "locked": false,
     "dialogue": {

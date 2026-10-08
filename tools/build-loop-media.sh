@@ -61,9 +61,12 @@ build_one() {
     echo "跳过 look-${id}：母版不存在 ${src}" >&2
     return 0
   fi
-  local n
-  n="$(frame_count "${src}")"
-  echo "=== look-${id}：${n} 帧，倒序分块 ==="
+  local n total
+  total="$(frame_count "${src}")"
+  # 母版最后 1–2 帧有一次明显跳变（帧差约 0.27，平时约 0.05），往复在片尾转向时会闪一下，
+  # 所以默认去掉最后 TRIM_END 帧，正放到 N-1 帧为止。
+  n=$((total - ${TRIM_END:-2}))
+  echo "=== look-${id}：母版 ${total} 帧，取前 ${n} 帧，倒序分块 ==="
 
   rm -rf "${WORK}/rev"; mkdir -p "${WORK}/rev"
   # 倒放段取原始帧 0 … N-2（不含末帧），每块内部倒序，块按逆序拼接。
@@ -86,12 +89,13 @@ build_one() {
   "${FF}" -y -hide_banner -loglevel error \
     -i "${src}" \
     -f concat -safe 0 -i "${WORK}/rev/list.txt" \
-    -filter_complex "[0:v]${PREP}[vf];[1:v]setpts=N/60/TB,tpad=stop=1:stop_mode=clone,format=yuv420p[vr];[vf][vr]concat=n=2:v=1:a=0[vout];[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=end_sample=${fwd_samples},asplit[af][ar0];[ar0]atrim=end_sample=${rev_samples},areverse[ar];[af][ar]concat=n=2:v=0:a=1[aout]" \
+    -filter_complex "[0:v]${PREP},trim=end_frame=${n}[vf];[1:v]setpts=N/60/TB,tpad=stop=1:stop_mode=clone,format=yuv420p[vr];[vf][vr]concat=n=2:v=1:a=0[vout];[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS,apad,atrim=end_sample=${fwd_samples},asplit[af][ar0];[ar0]atrim=end_sample=${rev_samples},areverse[ar];[af][ar]concat=n=2:v=0:a=1[aout]" \
     -map "[vout]" -map "[aout]" \
     ${VIDEO_ARGS} ${COLOR_ARGS} ${AUDIO_ARGS} -movflags +faststart -f mp4 "${out}"
 
+  # 按视频包数核对（解码计数会漏掉时长为 0 的最后一帧）。
   local frames
-  frames="$(frame_count "${out}")"
+  frames="$("${FF}" -hide_banner -i "${out}" -map 0:v -c copy -f null - 2>&1 | grep -oE 'frame= *[0-9]+' | tail -1 | grep -oE '[0-9]+')"
   if [ "${frames}" != "$((n * 2))" ]; then
     echo "look-${id}：帧数 ${frames} ≠ 预期 $((n * 2))，保留原文件不覆盖" >&2
     rm -f "${out}"
