@@ -84,6 +84,7 @@
   let spinning = false;
   let rewinding = false;
   let rewindTask = null;
+  let pivotTimer;
   let bag = [];
   let idleTimer, toastTimer, loadingTimer, replyTimer;
   let lastChange = Date.now();
@@ -381,18 +382,34 @@
     // Speculative preparation is silent; a failed handoff falls back to a plain seek.
     item.promise.catch(() => {});
   }
+  // 准备下一轮要推迟一点：seek 会占用解码器与 IO，若正好压在新牌组起播的那几帧上
+  // 就会掉帧。一个来回约 10 秒，推迟 1.5 秒仍绰绰有余。
+  function schedulePivot(delayMs) {
+    clearTimeout(pivotTimer);
+    pivotTimer = setTimeout(() => {
+      if (looping() && phase === 'playing' && !rewinding) preparePivot();
+    }, delayMs);
+  }
   function swapLoopDecks() {
     const outgoing = video;
     video = spare; spare = outgoing;
+    // 旧的预取对象已随牌组对调失效，必须清掉，否则 preparePivot 会被守卫挡住不再准备。
+    prefetch = null;
+    // 先停掉看不见的旧牌组，免得它继续抢占解码。
+    outgoing.pause(); outgoing.muted = true;
     video.id = 'film'; spare.id = 'filmNext';
     video.muted = !prefs.sound; video.volume = prefs.volume / 100;
-    video.style.opacity = '1'; video.style.zIndex = '1'; video.classList.add('visible');
-    spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1'; spare.muted = true;
-    prefetch = null;
+    // 极短交叉淡入：切点两侧是同一帧，所以看不出混合，但能盖住合成层切换的空隙。
+    video.style.zIndex = '2'; video.classList.add('visible');
+    const fade = video.animate([{opacity: 0}, {opacity: 1}], {duration: 140, easing: 'linear', fill: 'forwards'});
     video.play().catch(() => {});
     watchFrames();
-    // 换下来的牌组立刻为下一轮定位折返点（下一轮还有约 10 秒余量）。
-    preparePivot();
+    fade.finished.then(() => {
+      fade.cancel();
+      video.style.opacity = '1'; video.style.zIndex = '1';
+      spare.classList.remove('visible'); spare.style.opacity = '0'; spare.style.zIndex = '1';
+    }).catch(() => {});
+    schedulePivot(1500);
   }
   function cancelSpin() {
     ++spinId;
@@ -533,8 +550,8 @@
   }
   function primeLoop() {
     if (!cycling() || !['playing', 'paused'].includes(phase)) return;
-    // 往复模式不换装，改为让备用牌组提前定位到折返点。
-    if (looping()) { preparePivot(); return; }
+    // 往复模式不换装，改为让备用牌组提前定位到折返点（稍作延后，避开起播那几帧）。
+    if (looping()) { schedulePivot(1200); return; }
     const next = nextLoopIndex();
     if (next !== null) prepareNext(next);
   }
