@@ -1,4 +1,4 @@
-//! PURPLE · 片刻 的独立应用外壳（只支持 macOS）。
+//! Hinata Moment（PURPLE · 片刻）的独立应用外壳（只支持 macOS）。
 //! 每块显示器一个无边框的全屏窗口，垫在所有应用窗口和 Dock 下面；视频作为打包资源经 asset 协议读取。
 //! 不依赖 Plash、本地 http 服务或 osascript，也不改写系统桌面图片。
 
@@ -179,7 +179,7 @@ fn create_screen_windows(app: &AppHandle) -> tauri::Result<()> {
         // 主屏的原点是 (0, 0)。只有主屏出声，其余屏幕静音，避免几块屏幕各放一遍声音。
         let script = format!("window.__PURPLE_SHELL__={{interactive:{interactive},primary:{}}};", x == 0 && y == 0);
         let window = WebviewWindowBuilder::new(app, format!("screen-{generation}-{i}"), WebviewUrl::App("index.html".into()))
-            .title("Purple Moment")
+            .title("Hinata Moment")
             .initialization_script(&script)
             .decorations(false)
             .shadow(false)
@@ -240,7 +240,7 @@ pub fn run() {
             let hidden = MenuItem::with_id(app, "hidden", "隐藏壁纸", true, Some("Cmd+Alt+Shift+H"))?;
             let mode = CheckMenuItem::with_id(app, "wallpaper", "纯壁纸模式", true, wallpaper, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", "登录时自动启动", true, false, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出 Purple Moment", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出 Hinata Moment", true, None::<&str>)?;
             // 功能说明收在子菜单里，不占第一层。说明条目不可点击。
             let note = |text: &str| MenuItem::new(app, text, false, None::<&str>);
             let help = Submenu::with_items(

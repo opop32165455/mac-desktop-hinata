@@ -14,7 +14,7 @@
 需要 Rust、Node.js 和 Xcode 命令行工具。
 
 - `npm install` 后 `npm run build`：通用版（Apple 芯片 + Intel，需要 `rustup target add x86_64-apple-darwin`），产物在 `src-tauri/target/universal-apple-darwin/release/bundle/`。只打本机架构用 `npm run build:arm`。
-- 发布：把 DMG 改名为 `PurpleMoment-版本号-universal.dmg`（原文件名带空格）传到 GitHub Release。版本号在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处。
+- 发布：把 DMG 改名为 `HinataMoment-版本号-universal.dmg`（原文件名带空格）传到 GitHub Release。版本号在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处。
 - 只有临时签名（ad-hoc），没有 Apple 公证，用户第一次打开要到「隐私与安全性」点「仍要打开」。
 - 打包失败后可能留下挂载着的 `rw.*.dmg`（在 `bundle/macos/`），先 `hdiutil detach` 再删掉，否则下一次 DMG 步骤会失败。
 - `.gitignore` 里的 `Icon?` 会匹配到 `src-tauri/icons`，往里加文件要 `git add -f`。
@@ -27,7 +27,7 @@
 - **外壳与页面的接口**：`native-adapter.js`（先于 `app.js` 加载，只在应用里生效）提供 `window.PURPLE_NATIVE`，`app.js` 里用到 `NATIVE` 的地方都是为它准备的；样式在 `native.css`。外壳发三个事件：`app-active`（每秒一次，是否在看桌面）、`wallpaper-hidden`（是否已隐藏）、`interactive-mode`。`<html>` 上的 `is-native`、`is-interactive` 两个类区分状态。
 - **离开桌面时静音**：外壳每秒在主线程判断一次，最前面的应用是桌面本身（本应用 / 访达 / 程序坞 / 控制中心），或它在屏幕上没有普通窗口，才算在看桌面。只读应用标识和窗口位置，不需要屏幕录制权限。
 - **多显示器**：每块屏幕一个窗口，只有主屏出声；显示器增减或分辨率变化时整批重建窗口。只在单显示器上实际运行过。
-- **模式记忆**：纯壁纸 / 可操作记在 `~/Library/Application Support/com.purplemoment.desktop/mode`。页面偏好在 WebView 的 `localStorage`。
+- **模式记忆**：纯壁纸 / 可操作记在 `~/Library/Application Support/com.hinatamoment.desktop/mode`。页面偏好在 WebView 的 `localStorage`。
 
 ## 窗口层级
 

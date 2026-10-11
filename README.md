@@ -1,4 +1,4 @@
-# PURPLE · 片刻
+# Hinata Moment（PURPLE · 片刻）
 
 > 一张会陪你换装的桌面互动壁纸 —— macOS 版。
 
@@ -22,8 +22,8 @@ Windows 用户请直接在 Wallpaper Engine（小红车）创意工坊搜索 **F
 
 ## 安装
 
-1. 到 [Releases](https://github.com/opop32165455/mac-desktop-hinata/releases/latest) 下载 `PurpleMoment-版本号-universal.dmg`（约 370MB）。
-2. 打开 DMG，把 **Purple Moment** 拖进「应用程序」，然后打开它。
+1. 到 [Releases](https://github.com/opop32165455/mac-desktop-hinata/releases/latest) 下载 `HinataMoment-版本号-universal.dmg`（约 370MB）。
+2. 打开 DMG，把 **Hinata Moment** 拖进「应用程序」，然后打开它。
 3. 安装包没有经过 Apple 公证，第一次打开会被系统拦下：到「系统设置 → 隐私与安全性」往下翻，点「仍要打开」。只需要一次。
 
 ## 怎么用
@@ -39,7 +39,7 @@ Windows 用户请直接在 Wallpaper Engine（小红车）创意工坊搜索 **F
 | 退出 | 关闭应用 |
 
 - **换装、改设置**：在默认的可操作模式下直接点桌面上的界面；界面一段时间不动会自动收起，移动鼠标即恢复。
-- **卸载**：菜单里先取消「登录时自动启动」并退出，再把「应用程序」里的 Purple Moment 移到废纸篓。
+- **卸载**：菜单里先取消「登录时自动启动」并退出，再把「应用程序」里的 Hinata Moment 移到废纸篓。
 
 ## 自己打包
 

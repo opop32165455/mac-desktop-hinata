@@ -1,10 +1,10 @@
 [package]
-name = "purple-moment"
-version = "1.0.1"
+name = "hinata-moment"
+version = "1.0.2"
 edition = "2021"
 
 [lib]
-name = "purple_moment_lib"
+name = "hinata_moment_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
