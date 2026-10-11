@@ -1,0 +1,29 @@
+/* PURPLE · 片刻 — 独立应用样式
+ *
+ * 仅在 <html class="is-native"> 下生效（native-adapter.js 在独立应用里加上），
+ * Plash、Wallpaper Engine 与普通浏览器完全不受影响。
+ */
+
+/* 纯壁纸模式（没有 is-interactive）：窗口在桌面图标下面、不可点击，隐藏全部界面，呈现纯净壁纸。
+ * 菜单栏图标里切回可操作模式后界面恢复。 */
+html.is-native:not(.is-interactive) .interface,
+html.is-native:not(.is-interactive) .wake-button,
+html.is-native:not(.is-interactive) .toast,
+html.is-native:not(.is-interactive) .loading,
+html.is-native:not(.is-interactive) .scene-shade {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: opacity .8s var(--ease), visibility 0s linear .8s;
+}
+
+/* 顶部金色光边：窗口铺到菜单栏后面，菜单栏的毛玻璃会把这条 1px 的线晕成一串亮光。 */
+html.is-native .edge-light {
+  display: none !important;
+}
+
+/* 「菜单栏跟随衣橱」是为 Plash 准备的（那里菜单栏后面露出的是系统桌面图片）。
+ * 独立应用的窗口本身就铺到菜单栏后面，不需要、也不会去改系统桌面图片。 */
+html.is-native label[for="menuBarToggle"] {
+  display: none !important;
+}

@@ -1,6 +1,7 @@
 # AGENTS.md —— 给 AI 编程助手
 
 面向人的说明在 [README.md](README.md)。这里是部署步骤与修改代码前需要知道的事实。
+现在推荐的分发方式是独立应用（见下方「独立应用」）；Plash 方式仍然保留。
 
 ## 规则
 
@@ -8,7 +9,7 @@
 - 运行时只依赖 macOS 自带程序：`/usr/sbin/httpd`（Apache）、`/usr/bin/osascript`、`bash`、`curl`、`unzip`、`launchctl`。
 - **不要调用** `/usr/bin/python3`、`git`、`swift`：新装的 macOS（12+）上它们只是占位程序，一运行就弹窗要求安装命令行开发者工具。只有确认 `xcode-select -p` 能输出路径时才可使用。Python / ffmpeg 只用于重新生成视频。
 
-## 部署步骤（macOS + Plash）
+## 部署步骤（macOS + Plash，旧方式）
 
 按顺序执行，每步验证后再继续。
 
@@ -55,7 +56,23 @@
 
 卸载：`bash tools/plash-setup.sh stop`（等同双击 `plash-stop.command`），再在 Plash 里删除该网站。
 
-## 运行结构
+## 独立应用（Tauri，推荐的分发方式）
+
+用户从 GitHub Releases 下载 DMG 安装，不需要 Plash、本地服务或任何别的软件。上面的「规则」里关于运行时依赖的两条只针对 Plash 方式；构建独立应用需要 Rust、Node.js 和 Xcode 命令行工具。
+
+- **打包**：`npm install` 后 `npm run build`（通用版，需要 `rustup target add x86_64-apple-darwin`），产物在 `src-tauri/target/universal-apple-darwin/release/bundle/`。只打本机架构用 `npm run build:arm`。
+  发布时把 DMG 改名为 `PurpleMoment-版本号-universal.dmg` 再传到 Release（原文件名带空格）。版本号在 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 三处。
+- **前端不搬家**：页面文件仍在仓库根目录，Plash 方式照常可用。打包前 `tools/app-stage.sh` 把 `index.html`、`*.js`、`*.css`、`images/` 拷到 `build/app-frontend/`（Tauri 会把前端目录整个嵌进可执行文件，不能直接指向根目录）。
+- **视频是打包资源**：`media/` 经 `tauri.conf.json` 的 `bundle.resources` 放进应用的资源目录，运行时经 asset 协议读取（范围 `$RESOURCE/media/**`，支持 Range）。不要放进前端目录：会被嵌进可执行文件。视频与 Plash 方式是同一批文件（HEVC），不需要为应用另外转码。
+- **外壳与页面的接口**：`src-tauri/src/lib.rs` 是全部原生逻辑。`native-adapter.js`（先于 `app.js` 加载，只在应用里生效）提供 `window.PURPLE_NATIVE`，`app.js` 里凡是 `NATIVE` 开头的分支都是为它准备的；样式在 `native.css`。外壳发三个事件：`app-active`（每秒一次，是否在看桌面）、`boss-key`（是否已隐藏）、`interactive-mode`。
+- **窗口层级**：数值随系统版本不同，运行时用 `CGWindowLevelForKey` 查（2 = 桌面，18 = 桌面图标）。纯壁纸 = 桌面 + 1；可操作 = 桌面图标 + 2。不能用「图标 + 1」（与系统的菜单栏衬底窗口同层，菜单栏下方会出现时有时无的亮带），也不能用高于 0 的层级（会挡住所有应用和 Dock）。
+- **离开桌面时静音**：外壳每秒在主线程判断一次，最前面的应用是桌面本身（本应用 / 访达 / 程序坞 / 控制中心），或它在屏幕上没有普通窗口，才算在看桌面。只读应用标识和窗口位置，不需要屏幕录制权限。
+- **多显示器**：每块屏幕一个窗口，只有主屏出声；显示器增减或分辨率变化时整批重建窗口。只在单显示器上实际运行过。
+- **签名**：只有临时签名（ad-hoc），没有 Apple 公证，用户第一次打开要到「隐私与安全性」点「仍要打开」。
+- **窗口被完全挡住时 WebKit 不绘制**：验证画面时如果另一个全屏壁纸应用盖在上面，截到的会是一片灰，不是出错。
+- **打包失败后**可能留下挂载着的 `rw.*.dmg`（在 `bundle/macos/`），先 `hdiutil detach` 再删掉，否则下一次 DMG 步骤会失败。
+
+## 运行结构（Plash 方式）
 
 - **本地服务**：launchd 代理 `com.purple-moment-mac.server`（`~/Library/LaunchAgents/`）运行 `tools/plash-server.sh`，生成 `~/Library/Application Support/purple-desktop/httpd.conf` 后前台运行系统 Apache。只监听 `127.0.0.1:47070`；原生 Range；全部响应 `Cache-Control: no-cache`；拒绝隐藏文件。模块路径从 `/etc/apache2/httpd.conf` 读取以适配不同 macOS 版本。
   Plash 不支持 `file://`，所以必须有本地 http 服务。

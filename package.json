@@ -1,0 +1,14 @@
+{
+  "name": "purple-moment",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build --target universal-apple-darwin",
+    "build:arm": "tauri build",
+    "icon": "tauri icon docs/app-icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

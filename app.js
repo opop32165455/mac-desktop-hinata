@@ -29,6 +29,8 @@
   // hardware-decode it. CEF (Wallpaper Engine) and Firefox usually cannot; rebuild
   // with `CODEC=h264 tools/build-loop-media.sh` for those hosts.
   const MEDIA_EXT = 'mp4';
+  // 独立应用（Tauri 外壳）里由 native-adapter.js 提供：视频地址、是否在看桌面、是否主屏。其他宿主里为空。
+  const NATIVE = window.PURPLE_NATIVE || null;
   // 视频重新生成后改这个版本号，Plash 才不会继续播缓存里的旧文件。
   const MEDIA_VERSION = '20261008g';
   let saved = {};
@@ -297,7 +299,7 @@
    * 不在桌面时把音量 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
    * 没有这个接口（Wallpaper Engine、普通浏览器）时探不到就不再轮询，行为同以前。 */
   let duck = 1, duckTarget = 1, duckTimer = 0, awayTimer = 0, awayProbe = 'unknown', awayFails = 0;
-  function soundLevel() { return prefs.volume / 100 * duck * quiet; }
+  function soundLevel() { return NATIVE && !NATIVE.primary ? 0 : prefs.volume / 100 * duck * quiet; }
   /* 往复循环段静音：每套第一次正放到底有声音；一进入倒放（循环开始）就把音量淡到 0，
    * 循环里的倒放、正放都不出声。切换穿搭的倒带、换上来的新一套恢复声音。
    * 同样只动音量、不动 muted（无手势取消静音会被 WebKit 暂停）。 */
@@ -344,6 +346,8 @@
       .catch(() => { menuBarKey = ''; });
   }
   async function pollDesktop() {
+    // 独立应用：外壳直接告知是否在看桌面，不需要本地服务。
+    if (NATIVE) { rampDuck(prefs.sound && prefs.muteAway && !NATIVE.active ? 0 : 1); return; }
     syncMenuBar();
     clearTimeout(awayTimer);
     // 关掉声音或关掉「离开桌面时静音」时不轮询；重新打开时由按钮事件重新启动。
@@ -892,7 +896,7 @@
   }
   async function loadSource(deck, index, signal) {
     await mediaEvent('loadeddata', signal, () => {
-      deck.preload = 'auto'; deck.src = `media/look-${LOOKS[index].id}.${MEDIA_EXT}?v=${MEDIA_VERSION}`; deck.load();
+      deck.preload = 'auto'; deck.src = NATIVE?.media[LOOKS[index].id] || `media/look-${LOOKS[index].id}.${MEDIA_EXT}?v=${MEDIA_VERSION}`; deck.load();
     }, deck);
   }
   async function ensureLoaded(index, signal) {
@@ -1468,10 +1472,14 @@
   }
   showRememberedStill();
   pollDesktop();
-  if (cycling()) {
-    const index = prefs.playbackMode === 'favorites' && !prefs.favorites.includes(current) ? favoriteOrder()[0] : current;
-    selectLook(index, {quiet: true});
-  } else if (Math.abs(freezeTime() - LOOKS[current].freeze) > .008) selectLook(current, { restore: true });
+  const start = () => {
+    if (cycling()) {
+      const index = prefs.playbackMode === 'favorites' && !prefs.favorites.includes(current) ? favoriteOrder()[0] : current;
+      selectLook(index, {quiet: true});
+    } else if (Math.abs(freezeTime() - LOOKS[current].freeze) > .008) selectLook(current, { restore: true });
+  };
+  // 独立应用里要先拿到视频的地址才能开始播放。
+  if (NATIVE) { NATIVE.onChange = pollDesktop; NATIVE.ready.then(start); } else start();
 })();
 
 /* Self-contained optional layout feature; no writes to wardrobe/playback preferences. */
