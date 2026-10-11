@@ -45,7 +45,7 @@
     if (native.onChange) native.onChange();
   }
   tauri.event.listen('app-active', function (event) { setActive(event.payload !== false); });
-  tauri.event.listen('boss-key', function (event) { setActive(!event.payload); }); // payload = 是否已隐藏
+  tauri.event.listen('wallpaper-hidden', function (event) { setActive(!event.payload); }); // payload = 是否已隐藏
   tauri.event.listen('interactive-mode', function (event) { root.classList.toggle('is-interactive', Boolean(event.payload)); });
 
   native.ready = (async function () {

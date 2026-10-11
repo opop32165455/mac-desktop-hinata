@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, Wry,
@@ -29,26 +29,26 @@ static GENERATION: AtomicUsize = AtomicUsize::new(0);
 static LAYOUT: Mutex<Vec<(i32, i32, u32, u32)>> = Mutex::new(Vec::new());
 
 struct TrayItems {
-    hidden: CheckMenuItem<Wry>,
+    hidden: MenuItem<Wry>,
     wallpaper: CheckMenuItem<Wry>,
     autostart: CheckMenuItem<Wry>,
 }
 
 fn sync_tray(app: &AppHandle) {
     let Some(items) = app.try_state::<TrayItems>() else { return };
-    let _ = items.hidden.set_checked(HIDDEN.load(Ordering::SeqCst));
+    let _ = items.hidden.set_text(if HIDDEN.load(Ordering::SeqCst) { "展示壁纸" } else { "隐藏壁纸" });
     let _ = items.wallpaper.set_checked(!INTERACTIVE.load(Ordering::SeqCst));
     let _ = items.autostart.set_checked(app.autolaunch().is_enabled().unwrap_or(false));
 }
 
-/// 老板键：一键隐藏 / 恢复所有桌面窗口，并通知前端静音。
+/// 隐藏 / 展示壁纸：一键藏起或恢复所有桌面窗口，并通知前端静音。
 fn toggle_hidden(app: &AppHandle) {
     let hidden = !HIDDEN.load(Ordering::SeqCst);
     HIDDEN.store(hidden, Ordering::SeqCst);
     for (_, w) in app.webview_windows() {
         let _ = if hidden { w.hide() } else { w.show() };
     }
-    let _ = app.emit("boss-key", hidden);
+    let _ = app.emit("wallpaper-hidden", hidden);
     sync_tray(app);
 }
 
@@ -232,15 +232,38 @@ pub fn run() {
             INTERACTIVE.store(!wallpaper, Ordering::SeqCst);
             create_screen_windows(&handle)?;
 
-            // 老板键 Cmd + Option + Shift + H（Cmd + Option + H 是系统的「隐藏其他」，不能占用）。
+            // 隐藏 / 展示壁纸的快捷键 Cmd + Option + Shift + H（Cmd + Option + H 是系统的「隐藏其他」，不能占用）。
             // 被别的应用占用时注册会失败，不影响启动，菜单栏里仍可操作。
             let _ = app.global_shortcut().register(Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT | Modifiers::SHIFT), Code::KeyH));
 
-            let hidden = CheckMenuItem::with_id(app, "hidden", "隐藏壁纸", true, false, Some("Cmd+Alt+Shift+H"))?;
-            let mode = CheckMenuItem::with_id(app, "wallpaper", "纯壁纸模式（露出桌面图标，不可点击）", true, wallpaper, None::<&str>)?;
+            // 快捷键直接显示在菜单项右侧，用户不用记。
+            let hidden = MenuItem::with_id(app, "hidden", "隐藏壁纸", true, Some("Cmd+Alt+Shift+H"))?;
+            let mode = CheckMenuItem::with_id(app, "wallpaper", "纯壁纸模式", true, wallpaper, None::<&str>)?;
             let autostart = CheckMenuItem::with_id(app, "autostart", "登录时自动启动", true, false, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 Purple Moment", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&hidden, &mode, &PredefinedMenuItem::separator(app)?, &autostart, &PredefinedMenuItem::separator(app)?, &quit])?;
+            // 功能说明收在子菜单里，不占第一层。说明条目不可点击。
+            let note = |text: &str| MenuItem::new(app, text, false, None::<&str>);
+            let help = Submenu::with_items(
+                app,
+                "！功能说明",
+                true,
+                &[
+                    &note("隐藏壁纸 / 展示壁纸")?,
+                    &note("    一键把壁纸藏起来并静音，露出原来的系统桌面；再点一次恢复")?,
+                    &note("    快捷键：⌥⇧⌘H（Option + Shift + Command + H），在任何应用里都能用")?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &note("纯壁纸模式")?,
+                    &note("    不勾选：可以点击换装、改设置，会盖住桌面图标")?,
+                    &note("    勾选：界面全部收起，桌面图标露出来，画面不可点击")?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &note("登录时自动启动")?,
+                    &note("    开机登录后自动运行，不用每次手动打开")?,
+                ],
+            )?;
+            let menu = Menu::with_items(
+                app,
+                &[&hidden, &mode, &autostart, &PredefinedMenuItem::separator(app)?, &help, &PredefinedMenuItem::separator(app)?, &quit],
+            )?;
             app.manage(TrayItems { hidden, wallpaper: mode, autostart });
             sync_tray(&handle);
             TrayIconBuilder::new()

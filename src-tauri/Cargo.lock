@@ -2795,7 +2795,7 @@ dependencies = [
 
 [[package]]
 name = "purple-moment"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "objc2 0.5.3",
  "tauri",
