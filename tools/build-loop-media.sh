@@ -13,7 +13,7 @@
 #  2. 不对整段用 reverse 滤镜（12 秒 4K60 要缓冲约 9GB 原始帧）。改为每 60 帧一块
 #     倒序，存成无损中间文件，再按逆序拼接，内存峰值约 1GB。
 #  3. HEVC（hvc1）：同样码率下比 H.264 清晰得多，Apple 芯片硬件解码，
-#     Safari / Plash / macOS 上的 Chrome 都能播。Windows 上的 Wallpaper Engine
+#     macOS 的 WKWebView、Safari、Chrome 都能播。Windows 上的 Wallpaper Engine
 #     通常不能解 HEVC，需要时可用 CODEC=h264 生成 H.264 版本。
 #  4. 每 30 帧（0.5 秒）一个闭合 GOP，关键帧落在整半秒上：默认折返点 7 秒
 #     正好是关键帧，文件内 seek（倒带、折返）只需解码很少的帧。

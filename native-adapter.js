@@ -1,7 +1,7 @@
 /* PURPLE · 片刻 — 独立应用适配层
  *
- * 仅在页面运行于独立应用（Tauri 外壳，src-tauri/）中时生效；在 Plash、Wallpaper Engine
- * 与普通浏览器里 window.__TAURI__ 不存在，本脚本什么都不做。
+ * 仅在页面运行于独立应用（Tauri 外壳，src-tauri/）中时生效；
+ * 普通浏览器预览时 window.__TAURI__ 不存在，本脚本什么都不做。
  *
  * 本脚本在 app.js 之前加载，向它提供 window.PURPLE_NATIVE：
  *   media      穿搭编号 → 视频地址。视频是应用的打包资源，经 asset 协议按路径读取（支持 Range）。
@@ -12,7 +12,7 @@
  *
  * 另外：
  *   - <html> 加上 is-native；可操作模式再加 is-interactive（纯壁纸模式的界面隐藏规则在 native.css）。
- *   - 首次运行默认每 15 分钟换一套（与 Plash 版一致），此后尊重用户的选择。
+ *   - 首次运行默认每 15 分钟换一套，此后尊重用户的选择。
  *   - 点选前预解码定格图，消除 WebKit「先模糊后清晰」。
  */
 (function () {

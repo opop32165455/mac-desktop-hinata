@@ -40,10 +40,6 @@ Windows 用户请直接在 Wallpaper Engine（小红车）创意工坊搜索 **F
 - **换装、改设置**：在默认的可操作模式下直接点桌面上的界面；界面一段时间不动会自动收起，移动鼠标即恢复。
 - **卸载**：菜单里先取消「登录时自动启动」并退出，再把「应用程序」里的 Purple Moment 移到废纸篓。
 
-## 仍然想用 Plash
-
-旧的 Plash 方式（本地服务 + Plash）仍然保留，步骤见 [AGENTS.md](AGENTS.md) 的「部署步骤」。两种方式不要同时开。
-
 ## 自己打包
 
 需要 [Rust](https://rustup.rs)、Node.js 和 Xcode 命令行工具。
