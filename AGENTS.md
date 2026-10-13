@@ -24,8 +24,8 @@
 - **前端**在仓库根目录，纯静态、没有打包器：`index.html`、`app.js`（一个大的 IIFE）、`catalog.js`（穿搭数据）、`images/`。打包前 `tools/app-stage.sh` 把它们拷到 `build/app-frontend/`：Tauri 会把前端目录整个嵌进可执行文件，不能直接指向根目录。
 - **视频是打包资源**：`media/` 经 `tauri.conf.json` 的 `bundle.resources` 放进应用的资源目录，运行时经 asset 协议读取（范围 `$RESOURCE/media/**`，支持 Range）。不要放进前端目录。
 - **外壳**：`src-tauri/src/lib.rs` 是全部原生逻辑，一个文件。
-- **外壳与页面的接口**：`native-adapter.js`（先于 `app.js` 加载，只在应用里生效）提供 `window.PURPLE_NATIVE`，`app.js` 里用到 `NATIVE` 的地方都是为它准备的；样式在 `native.css`。外壳发三个事件：`app-active`（每秒一次，是否在看桌面）、`wallpaper-hidden`（是否已隐藏）、`interactive-mode`。`<html>` 上的 `is-native`、`is-interactive` 两个类区分状态。
-- **离开桌面时静音**：外壳每秒在主线程判断一次，最前面的应用是桌面本身（本应用 / 访达 / 程序坞 / 控制中心），或它在屏幕上没有普通窗口，才算在看桌面。只读应用标识和窗口位置，不需要屏幕录制权限。
+- **外壳与页面的接口**：`native-adapter.js`（先于 `app.js` 加载，只在应用里生效）提供 `window.PURPLE_NATIVE`，`app.js` 里用到 `NATIVE` 的地方都是为它准备的；样式在 `native.css`。外壳发三个事件：`app-active`（每秒一次，哪些窗口被遮住一半以上）、`wallpaper-hidden`（是否已隐藏）、`interactive-mode`。`<html>` 上的 `is-native`、`is-interactive` 两个类区分状态。
+- **离开桌面时静音 / 暂停**：外壳每秒在主线程算一次每块屏幕被别的应用的普通窗口（层级 0，重叠部分只算一次）遮住的比例（`covered_screens`），把遮住一半以上的窗口标签随 `app-active` 发给页面；这些屏幕的页面静音并暂停播放（暂停走 `app.js` 的 `suspended()`）。**只看面积，不看谁是最前面的应用**：点一下壁纸或访达会让最前面的应用变成桌面本身，而「显示桌面」只是把窗口推到屏幕边缘外、最前面的应用仍然有窗口，两种情况下按最前面的应用判断都是错的。受设置里「离开桌面时静音」开关控制。只读窗口位置，不需要屏幕录制权限。
 - **多显示器**：每块屏幕一个窗口，只有主屏出声；显示器增减或分辨率变化时整批重建窗口。只在单显示器上实际运行过。
 - **模式记忆**：纯壁纸 / 可操作记在 `~/Library/Application Support/com.hinatamoment.desktop/mode`。页面偏好在 WebView 的 `localStorage`。
 

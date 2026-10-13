@@ -3,7 +3,7 @@
 //! 不依赖 Plash、本地 http 服务或 osascript，也不改写系统桌面图片。
 
 use std::{
-    ffi::{c_char, c_void, CStr},
+    ffi::{c_void, CStr},
     fs,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -101,64 +101,83 @@ fn set_level(window: &WebviewWindow, interactive: bool) {
     }
 }
 
-/// 用户是否在看桌面：最前面的应用是桌面本身（本应用 / 访达 / 程序坞 / 控制中心等），
-/// 或者它在屏幕上没有任何普通窗口。只读应用标识与窗口位置，不需要屏幕录制权限。必须在主线程调用。
-fn on_desktop() -> bool {
+/// 各块屏幕是否被别的应用的普通窗口遮住一半以上。
+/// 只看遮挡面积，不看谁是最前面的应用：点一下壁纸或访达，最前面的应用就成了桌面本身，但别的窗口仍然盖着桌面；
+/// 反过来，「显示桌面」只是把窗口推到屏幕边缘外，最前面的应用仍然有窗口，桌面却已经露出来了。
+/// `screens` 是各块屏幕的 (x, y, 宽, 高)，单位是点，原点在主屏左上角，与 kCGWindowBounds 一致。
+/// 只读窗口位置，不需要屏幕录制权限。必须在主线程调用。
+fn covered_screens(screens: &[[f64; 4]]) -> Vec<bool> {
     use objc2::{class, msg_send, runtime::AnyObject};
-    const DESKTOP_APPS: [&str; 6] = [
-        "com.apple.finder",
-        "com.apple.dock",
-        "com.apple.controlcenter",
-        "com.apple.notificationcenterui",
-        "com.apple.WindowManager",
-        "com.apple.loginwindow",
-    ];
+    let own = std::process::id() as i32;
     unsafe {
-        let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
-        let front: *mut AnyObject = msg_send![workspace, frontmostApplication];
-        if front.is_null() {
-            return true;
-        }
-        let pid: i32 = msg_send![front, processIdentifier];
-        if pid == std::process::id() as i32 {
-            return true;
-        }
-        let bundle: *mut AnyObject = msg_send![front, bundleIdentifier];
-        if !bundle.is_null() {
-            let utf8: *const c_char = msg_send![bundle, UTF8String];
-            if !utf8.is_null() && DESKTOP_APPS.contains(&CStr::from_ptr(utf8).to_str().unwrap_or("")) {
-                return true;
-            }
-        }
-
         // 1 = 只要屏幕上的窗口，16 = 排除桌面元素。返回的 CFArray / CFDictionary 可直接当 NSArray / NSDictionary 用。
         let list = CGWindowListCopyWindowInfo(1 | 16, 0);
         if list.is_null() {
-            return true;
+            return vec![false; screens.len()];
         }
         let key = |name: &CStr| -> *mut AnyObject { msg_send![class!(NSString), stringWithUTF8String: name.as_ptr()] };
         let int = |dict: *mut AnyObject, name: &CStr| -> i32 {
             let value: *mut AnyObject = msg_send![dict, objectForKey: key(name)];
             if value.is_null() { -1 } else { msg_send![value, intValue] }
         };
+        let float = |dict: *mut AnyObject, name: &CStr| -> f64 {
+            let value: *mut AnyObject = msg_send![dict, objectForKey: key(name)];
+            if value.is_null() { 0.0 } else { msg_send![value, doubleValue] }
+        };
         let windows = list as *mut AnyObject;
         let count: usize = msg_send![windows, count];
-        let mut has_window = false;
+        let mut rects: Vec<[f64; 4]> = Vec::new();
         for i in 0..count {
             let info: *mut AnyObject = msg_send![windows, objectAtIndex: i];
-            if int(info, c"kCGWindowOwnerPID") != pid || int(info, c"kCGWindowLayer") != 0 {
+            if int(info, c"kCGWindowOwnerPID") == own || int(info, c"kCGWindowLayer") != 0 || float(info, c"kCGWindowAlpha") <= 0.0 {
                 continue;
             }
             let bounds: *mut AnyObject = msg_send![info, objectForKey: key(c"kCGWindowBounds")];
-            // 忽略应用自己留在屏幕上的小辅助窗口
-            if !bounds.is_null() && int(bounds, c"Width") >= 100 && int(bounds, c"Height") >= 100 {
-                has_window = true;
-                break;
+            if bounds.is_null() {
+                continue;
             }
+            let rect = [float(bounds, c"X"), float(bounds, c"Y"), float(bounds, c"Width"), float(bounds, c"Height")];
+            // 忽略应用留在屏幕上的小辅助窗口
+            if rect[2] < 100.0 || rect[3] < 100.0 {
+                continue;
+            }
+            rects.push(rect);
         }
         CFRelease(list);
-        !has_window
+        screens.iter().map(|screen| coverage(screen, &rects) >= 0.5).collect()
     }
+}
+
+/// 一组窗口（可以互相重叠）盖住了屏幕的多大比例，0 到 1。矩形都是 (x, y, 宽, 高)。
+fn coverage(screen: &[f64; 4], windows: &[[f64; 4]]) -> f64 {
+    let [sx, sy, sw, sh] = *screen;
+    if sw <= 0.0 || sh <= 0.0 {
+        return 0.0;
+    }
+    // 裁到屏幕范围内，换成 (左, 上, 右, 下)
+    let clipped: Vec<[f64; 4]> = windows
+        .iter()
+        .map(|&[x, y, w, h]| [x.max(sx), y.max(sy), (x + w).min(sx + sw), (y + h).min(sy + sh)])
+        .filter(|r| r[2] > r[0] && r[3] > r[1])
+        .collect();
+    let mut xs: Vec<f64> = clipped.iter().flat_map(|r| [r[0], r[2]]).collect();
+    xs.sort_by(f64::total_cmp);
+    xs.dedup();
+    // 按竖条累加：每一条里把落在其中的窗口的上下区间合并后求长度
+    let mut area = 0.0;
+    for strip in xs.windows(2) {
+        let mut spans: Vec<(f64, f64)> = clipped.iter().filter(|r| r[0] <= strip[0] && r[2] >= strip[1]).map(|r| (r[1], r[3])).collect();
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (mut height, mut end) = (0.0, f64::NEG_INFINITY);
+        for (top, bottom) in spans {
+            if bottom > end {
+                height += bottom - top.max(end);
+                end = bottom;
+            }
+        }
+        area += height * (strip[1] - strip[0]);
+    }
+    area / (sw * sh)
 }
 
 fn monitor_layout(app: &AppHandle) -> Vec<(i32, i32, u32, u32)> {
@@ -177,8 +196,9 @@ fn create_screen_windows(app: &AppHandle) -> tauri::Result<()> {
     let interactive = INTERACTIVE.load(Ordering::SeqCst);
     for (i, &(x, y, w, h)) in layout.iter().enumerate() {
         // 主屏的原点是 (0, 0)。只有主屏出声，其余屏幕静音，避免几块屏幕各放一遍声音。
-        let script = format!("window.__PURPLE_SHELL__={{interactive:{interactive},primary:{}}};", x == 0 && y == 0);
-        let window = WebviewWindowBuilder::new(app, format!("screen-{generation}-{i}"), WebviewUrl::App("index.html".into()))
+        let label = format!("screen-{generation}-{i}");
+        let script = format!("window.__PURPLE_SHELL__={{interactive:{interactive},primary:{},label:'{label}'}};", x == 0 && y == 0);
+        let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
             .title("Hinata Moment")
             .initialization_script(&script)
             .decorations(false)
@@ -201,13 +221,27 @@ fn create_screen_windows(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 每秒一次（主线程）：显示器布局变了就重建窗口；把「是否在看桌面」告诉前端，用于离开时静音。
+/// 每秒一次（主线程）：显示器布局变了就重建窗口；把桌面的状态告诉前端，用于离开时静音、被遮住时暂停。
+/// 事件内容是被遮住一半以上的窗口的标签。壁纸隐藏时所有窗口都算被遮住。
 fn tick(app: &AppHandle) {
     let layout = monitor_layout(app);
     if !layout.is_empty() && layout != *LAYOUT.lock().unwrap() {
         let _ = create_screen_windows(app);
     }
-    let _ = app.emit("app-active", !HIDDEN.load(Ordering::SeqCst) && on_desktop());
+    let windows: Vec<WebviewWindow> = app.webview_windows().into_values().collect();
+    // 窗口铺满各自的屏幕，它的位置和大小（换算成点）就是屏幕的范围
+    let screens: Vec<[f64; 4]> = windows
+        .iter()
+        .map(|w| {
+            let scale = w.scale_factor().unwrap_or(1.0);
+            let (position, size) = (w.outer_position().unwrap_or_default(), w.outer_size().unwrap_or_default());
+            [position.x as f64 / scale, position.y as f64 / scale, size.width as f64 / scale, size.height as f64 / scale]
+        })
+        .collect();
+    let hidden = HIDDEN.load(Ordering::SeqCst);
+    let covered = covered_screens(&screens);
+    let covered: Vec<&str> = windows.iter().zip(&covered).filter(|(_, &c)| hidden || c).map(|(w, _)| w.label()).collect();
+    let _ = app.emit("app-active", covered);
 }
 
 pub fn run() {

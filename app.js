@@ -86,6 +86,7 @@
   let phase = 'held'; // held | loading | playing | paused | transition | editing | error
   let systemPaused = false;
   let documentPaused = document.hidden;
+  let desktopPaused = false; // 这块屏幕被别的应用窗口遮住一半以上（见 pollDesktop）
   let operation = 0;
   let controller = null;
   let loadedLook = -1;
@@ -210,7 +211,7 @@
     renderCards(true); activity(true);
   }
   function freezeTime() { return prefs.freezes[current]; }
-  function suspended() { return systemPaused || documentPaused; }
+  function suspended() { return systemPaused || documentPaused || desktopPaused; }
   function readyControls(disabled) {
     $('playButton').disabled = disabled;
     $('momentButton').disabled = disabled || phase === 'transition';
@@ -289,6 +290,7 @@
   }
   /* 离开桌面时静音：应用外壳每秒告知「用户是否在看桌面」（native-adapter.js 的 NATIVE.active）。
    * 不在桌面时把音量 300ms 淡到 0，回到桌面再淡回来。用音量而不是 muted —— 无手势取消静音会被 WebKit 暂停。
+   * 不在桌面 = 这块屏幕被别的应用窗口遮住一半以上，此时同时暂停画面，露出来后接着播。
    * 浏览器预览时没有外壳，保持有声。 */
   let duck = 1, duckTarget = 1, duckTimer = 0;
   function soundLevel() { return NATIVE && !NATIVE.primary ? 0 : prefs.volume / 100 * duck * quiet; }
@@ -322,7 +324,11 @@
     };
     step();
   }
-  function pollDesktop() { rampDuck(NATIVE && prefs.sound && prefs.muteAway && !NATIVE.active ? 0 : 1); }
+  function pollDesktop() {
+    rampDuck(NATIVE && prefs.sound && prefs.muteAway && !NATIVE.active ? 0 : 1);
+    const paused = Boolean(NATIVE && prefs.muteAway && !NATIVE.active);
+    if (paused !== desktopPaused) { desktopPaused = paused; onSuspend(); }
+  }
   // 在用户手势里对两个牌组各 play() 一次，WebKit 便会解除该元素的带声播放限制。
   // 暂停中的牌组立即 pause() 并恢复原静音状态，不会出声、也不会挪动画面。
   function unlockDecks() {

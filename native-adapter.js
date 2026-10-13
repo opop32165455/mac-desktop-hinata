@@ -6,7 +6,8 @@
  * 本脚本在 app.js 之前加载，向它提供 window.PURPLE_NATIVE：
  *   media      穿搭编号 → 视频地址。视频是应用的打包资源，经 asset 协议按路径读取（支持 Range）。
  *   ready      视频地址准备好之后兑现，app.js 等它再开始播放。
- *   active     用户是否在看桌面（外壳每秒告知一次），用于「离开桌面时静音」。
+ *   active     这块屏幕的桌面是否露着：没有被别的应用窗口遮住一半以上，壁纸也没有隐藏（外壳每秒告知一次）。
+ *              用于「离开桌面时静音」并暂停画面。
  *   primary    是否主屏。多显示器时每块屏幕各有一个窗口，只有主屏出声。
  *   onChange   active 变化时调用，由 app.js 填入。
  *
@@ -44,7 +45,8 @@
     native.active = active;
     if (native.onChange) native.onChange();
   }
-  tauri.event.listen('app-active', function (event) { setActive(event.payload !== false); });
+  // payload = 被遮住一半以上（或已隐藏）的窗口的标签
+  tauri.event.listen('app-active', function (event) { setActive((event.payload || []).indexOf(shell.label) === -1); });
   tauri.event.listen('wallpaper-hidden', function (event) { setActive(!event.payload); }); // payload = 是否已隐藏
   tauri.event.listen('interactive-mode', function (event) { root.classList.toggle('is-interactive', Boolean(event.payload)); });
 

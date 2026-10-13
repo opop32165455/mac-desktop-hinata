@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="dark">
   <title>PURPLE · 片刻</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23101619'/%3E%3Cpath d='M32 12L48 32 32 52 16 32Z' fill='%23dbc3a4'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=20261011e">
-  <link rel="stylesheet" href="glass.css?v=20261011e">
-  <link rel="stylesheet" href="native.css?v=20261011e">
+  <link rel="stylesheet" href="style.css?v=20261013b">
+  <link rel="stylesheet" href="glass.css?v=20261013b">
+  <link rel="stylesheet" href="native.css?v=20261013b">
 </head>
 <body>
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
@@ -101,7 +101,7 @@
       <button type="button" data-fit="contain" aria-pressed="true">完整画面</button><button type="button" data-fit="cover" aria-pressed="false">铺满屏幕</button>
     </div>
     <label class="setting-line toggle-line" for="loopToggle"><span>入场往复循环<small>正放到片尾后倒放回来，来回不停</small></span><input id="loopToggle" type="checkbox" checked><span class="switch"></span></label>
-    <label class="setting-line toggle-line" for="awayToggle"><span>离开桌面时静音<small>切到别的应用时自动静音，回到桌面恢复</small></span><input id="awayToggle" type="checkbox" checked><span class="switch"></span></label>
+    <label class="setting-line toggle-line" for="awayToggle"><span>离开桌面时静音<small>窗口遮住一半以上桌面时自动静音并暂停，露出桌面后恢复</small></span><input id="awayToggle" type="checkbox" checked><span class="switch"></span></label>
     <div class="setting-line" id="switchLabel">切换穿搭的方式</div>
     <div id="switchOptions" class="setting-options" role="group" aria-labelledby="switchLabel">
       <button type="button" data-switch-mode="rewind" aria-pressed="true">倒带</button><button type="button" data-switch-mode="cut" aria-pressed="false">闪入</button>
@@ -155,9 +155,9 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"><small id="toastSpeaker"></small><span id="toastText"></span></div>
   <div id="loading" class="loading" hidden><span></span> 正在为你准备…</div>
-  <script src="catalog.js?v=20261011e"></script>
-  <script src="dialogue-engine.js?v=20261011e"></script>
-  <script src="native-adapter.js?v=20261011e"></script>
-  <script src="app.js?v=20261011e"></script>
+  <script src="catalog.js?v=20261013b"></script>
+  <script src="dialogue-engine.js?v=20261013b"></script>
+  <script src="native-adapter.js?v=20261013b"></script>
+  <script src="app.js?v=20261013b"></script>
 </body>
 </html>
